@@ -1,0 +1,280 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: x64
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Ruff check
+        run: uv run ruff check .
+
+      - name: Ruff format
+        run: uv run ruff format --check .
+
+      - name: Mypy
+        run: uv run mypy .
+
+      - name: Tests with coverage
+        run: uv run pytest --cov=gravedigger --cov-branch --cov-report=term-missing --cov-report=xml --cov-fail-under=100 --junitxml=junit.xml -o junit_family=legacy
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          report_type: test_results
+          files: junit.xml
+
+  build-windows:
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: x64
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Cache Nuitka
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\Nuitka
+          key: nuitka-windows-py3.13-${{ hashFiles('uv.lock') }}
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\ccache
+          key: ccache-windows-${{ hashFiles('uv.lock') }}
+
+      - name: Install ccache
+        run: choco install ccache
+
+      - name: Build
+        run: uv run nuitka --onefile --prefer-source-code --mingw64 --assume-yes-for-downloads --show-scons --output-dir=build gravedigger/cli.py
+
+      - name: Package
+        run: |
+          Move-Item -Path build\cli.exe -Destination build\gravedigger.exe
+          Compress-Archive -Path build\gravedigger.exe -DestinationPath gravedigger-windows-x86_64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gravedigger-windows-x86_64
+          path: gravedigger-windows-x86_64.zip
+
+  build-linux:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: x64
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Cache Nuitka
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/Nuitka
+          key: nuitka-linux-py3.13-${{ hashFiles('uv.lock') }}
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-${{ hashFiles('uv.lock') }}
+
+      - name: Install ccache
+        run: sudo apt-get install -y ccache
+
+      - name: Build
+        run: uv run nuitka --onefile --prefer-source-code --assume-yes-for-downloads --show-scons --output-dir=build gravedigger/cli.py
+
+      - name: Package
+        run: |
+          mv build/cli.bin gravedigger
+          tar czf gravedigger-linux-x86_64.tar.gz gravedigger
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gravedigger-linux-x86_64
+          path: gravedigger-linux-x86_64.tar.gz
+
+  build-macos-arm:
+    needs: check
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Cache Nuitka
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Nuitka
+          key: nuitka-macos-arm-py3.13-${{ hashFiles('uv.lock') }}
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-macos-arm-${{ hashFiles('uv.lock') }}
+
+      - name: Install ccache
+        run: brew install ccache
+
+      - name: Build
+        run: uv run nuitka --onefile --prefer-source-code --assume-yes-for-downloads --show-scons --output-dir=build gravedigger/cli.py
+
+      - name: Package
+        run: |
+          mv build/cli.bin gravedigger
+          tar czf gravedigger-macos-arm64.tar.gz gravedigger
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gravedigger-macos-arm64
+          path: gravedigger-macos-arm64.tar.gz
+
+  build-macos-intel:
+    needs: check
+    runs-on: macos-13
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Cache Nuitka
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Nuitka
+          key: nuitka-macos-intel-py3.13-${{ hashFiles('uv.lock') }}
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-macos-intel-${{ hashFiles('uv.lock') }}
+
+      - name: Install ccache
+        run: brew install ccache
+
+      - name: Build
+        run: uv run nuitka --onefile --prefer-source-code --assume-yes-for-downloads --show-scons --output-dir=build gravedigger/cli.py
+
+      - name: Package
+        run: |
+          mv build/cli.bin gravedigger
+          tar czf gravedigger-macos-x86_64.tar.gz gravedigger
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gravedigger-macos-x86_64
+          path: gravedigger-macos-x86_64.tar.gz
+
+  release:
+    needs: [build-windows, build-linux, build-macos-arm, build-macos-intel]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Get date
+        id: date
+        run: echo "date=$(date +%Y.%m.%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Rename artifacts
+        env:
+          VERSION: ${{ steps.date.outputs.date }}.${{ github.run_number }}
+        run: |
+          mv gravedigger-windows-x86_64/gravedigger-windows-x86_64.zip gravedigger-${VERSION}-windows-x86_64.zip
+          mv gravedigger-linux-x86_64/gravedigger-linux-x86_64.tar.gz gravedigger-${VERSION}-linux-x86_64.tar.gz
+          mv gravedigger-macos-arm64/gravedigger-macos-arm64.tar.gz gravedigger-${VERSION}-macos-arm64.tar.gz
+          mv gravedigger-macos-x86_64/gravedigger-macos-x86_64.tar.gz gravedigger-${VERSION}-macos-x86_64.tar.gz
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.date.outputs.date }}.${{ github.run_number }}
+          name: ${{ steps.date.outputs.date }}.${{ github.run_number }}
+          files: |
+            gravedigger-${{ steps.date.outputs.date }}.${{ github.run_number }}-windows-x86_64.zip
+            gravedigger-${{ steps.date.outputs.date }}.${{ github.run_number }}-linux-x86_64.tar.gz
+            gravedigger-${{ steps.date.outputs.date }}.${{ github.run_number }}-macos-arm64.tar.gz
+            gravedigger-${{ steps.date.outputs.date }}.${{ github.run_number }}-macos-x86_64.tar.gz
