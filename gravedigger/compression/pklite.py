@@ -282,6 +282,9 @@ def decompress(data: bytes) -> bytes:
         else:
             # Literal byte (no XOR decryption - extra mode not supported)
             code_image.append(get_byte())
+    else:
+        msg = "Compressed code image ended without end-of-stream marker"
+        raise ValueError(msg)
 
     # Decompress relocation table (standard non-large mode)
     reloc_table: list[int] = []
@@ -298,6 +301,9 @@ def decompress(data: bytes) -> bytes:
             rel_lsb = struct.unpack_from("<H", data, pos)[0]
             pos += 2
             reloc_table.append((rel_msb << 16) | rel_lsb)
+    else:
+        msg = "Relocation table ended without terminator"
+        raise ValueError(msg)
 
     # Read footer (original SS, SP, CS, IP)
     footer_ss, footer_sp, footer_cs, footer_ip = struct.unpack_from("<4H", data, pos)
@@ -456,7 +462,7 @@ def _patch_compressed(
 
     next_bit()  # prime
 
-    while pos < len(original):
+    while True:
         if next_bit():  # duplication
             count = _bt_read(bt_count, next_bit)
 

@@ -157,8 +157,17 @@ class ExeTextHandler(FormatHandler):
         for code_offset, name in _STRING_TABLE:
             abs_offset = code_start + code_offset
             text = _read_nul_string(decompressed, abs_offset)
-            ws.append([name, text])
-            strings_meta.append({"id": name, "offset": code_offset, "max_length": len(text)})
+            stripped = text.rstrip("\n")
+            trailing_newlines = len(text) - len(stripped)
+            ws.append([name, stripped])
+            strings_meta.append(
+                {
+                    "id": name,
+                    "offset": code_offset,
+                    "max_length": len(text),
+                    "trailing_newlines": trailing_newlines,
+                }
+            )
 
         wb.save(translatable_dir / "strings.xlsx")
 
@@ -201,6 +210,10 @@ class ExeTextHandler(FormatHandler):
             code_offset: int = entry["offset"]
             max_length: int = entry["max_length"]
             new_text = text_by_id[str_id]
+
+            trailing = entry.get("trailing_newlines", 0)
+            if trailing and not new_text.endswith("\n"):
+                new_text += "\n" * trailing
 
             encoded = new_text.encode("ascii")
             if len(encoded) > max_length:

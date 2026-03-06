@@ -32,7 +32,7 @@ jobs:
         run: uv sync
 
       - name: Download game files
-        run: python -c "from urllib.request import urlretrieve; from zipfile import ZipFile; from pathlib import Path; urlretrieve('https://kosmodan.ru/f/ddave2.zip', 'ddave2.zip'); ZipFile('ddave2.zip').extractall(); Path('ddave2').rename('game')"
+        run: python -c "from urllib.request import urlretrieve; from zipfile import ZipFile; from pathlib import Path; urlretrieve('https://kosmodan.ru/f/ddave2-softdisk.zip', 'ddave2-softdisk.zip'); ZipFile('ddave2-softdisk.zip').extractall(); Path('ddave2').rename('game')"
 
       - name: Ruff check
         run: uv run ruff check .

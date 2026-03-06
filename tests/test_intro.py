@@ -103,6 +103,35 @@ class TestIntroHandlerRepack:
         assert repacked == original
 
 
+class TestIntroHandlerNoTrailing:
+    def test_unpack_no_trailing(self, tmp_path: Path) -> None:
+        """Unpack synthetic INTRO.DD2 with no trailing bytes."""
+        import struct
+
+        from gravedigger.compression.ega import encode_planar
+        from gravedigger.handlers.intro import INTRO_H, INTRO_W
+
+        pixels = [0] * (INTRO_W * INTRO_H)
+        planar = encode_planar(pixels, INTRO_W, INTRO_H)
+        compressed = compress_rle(planar)
+        data = struct.pack("<I", len(planar)) + compressed
+
+        input_path = tmp_path / "INTRO.DD2"
+        input_path.write_bytes(data)
+        trans = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        trans.mkdir()
+        meta.mkdir()
+
+        handler = IntroHandler()
+        manifest = handler.unpack(input_path, trans, meta)
+        assert "trailing" not in manifest.metadata
+
+        repack_path = tmp_path / "repacked.DD2"
+        handler.repack(manifest, trans, meta, repack_path)
+        assert repack_path.read_bytes() == data
+
+
 class TestIntroHandlerPatterns:
     def test_file_patterns(self) -> None:
         handler = IntroHandler()

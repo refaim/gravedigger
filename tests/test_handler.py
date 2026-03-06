@@ -48,11 +48,11 @@ class TestManifest:
 
     def test_with_metadata(self) -> None:
         m = Manifest(
-            handler="TileHandler",
-            source_file="EGATILES.DD2",
-            metadata={"total_tiles": 858},
+            handler="PicHandler",
+            source_file="TITLE1.DD2",
+            metadata={"width": 320},
         )
-        assert m.metadata["total_tiles"] == 858
+        assert m.metadata["width"] == 320
 
     def test_to_json(self, tmp_path: Path) -> None:
         m = Manifest(

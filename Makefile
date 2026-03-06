@@ -14,7 +14,7 @@ lint:
 	uv run mypy .
 
 test:
-	uv run pytest --cov=gravedigger --cov-report=term-missing --cov-fail-under=100
+	uv run pytest --cov=gravedigger --cov-branch --cov-report=term-missing --cov-fail-under=100
 
 build:
 	uv run nuitka --onefile --output-dir=.cache/nuitka --output-filename=$(EXE_NAME) gravedigger/cli.py

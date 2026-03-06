@@ -1,8 +1,8 @@
 # Gravedigger
 
-Resource unpacker/repacker for **Dangerous Dave in the Haunted Mansion** (DOS, 1991).
+Translation toolkit for **Dangerous Dave in the Haunted Mansion** (DOS, 1991).
 
-Extracts game assets (graphics, text, sprites, tiles) into editable formats and repacks them back, enabling fan translations and modding.
+Extracts translatable resources (text strings) from the game into editable formats and repacks them back into working game files, enabling fan translations into any language.
 
 ## Usage
 
@@ -11,8 +11,8 @@ gravedigger unpack <game_dir> <output_dir>
 gravedigger repack <output_dir> <repacked_dir>
 ```
 
-`unpack` reads original game files (`.DD2`, `.EXE`) and produces editable PNGs + metadata.
-`repack` takes the edited assets and rebuilds game files.
+`unpack` reads original game files (`.DD2`, `.EXE`) and produces editable assets: text strings as XLSX, graphics as PNG.
+`repack` takes the edited translations and rebuilds game files ready to play.
 
 ## Installation
 

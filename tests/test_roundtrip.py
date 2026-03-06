@@ -129,22 +129,16 @@ class TestCLIFullCycle:
         manifests = list((unpack_dir / "meta").rglob("manifest.json"))
         assert len(manifests) >= 1
 
-    def test_exe_unpack_creates_handler_subdirs(self, game_dir: Path, tmp_path: Path) -> None:
+    def test_exe_unpack_creates_meta_dir(self, game_dir: Path, tmp_path: Path) -> None:
         unpack_dir = tmp_path / "unpacked"
 
         result = _run_cli("unpack", str(game_dir), str(unpack_dir))
         assert result.returncode == 0, f"unpack failed:\n{result.stderr}"
 
-        # EXE files with multiple handlers get per-handler subdirectories
         for exe_file in sorted(game_dir.glob("*.EXE")):
             meta_exe_dir = unpack_dir / "meta" / exe_file.stem
             assert meta_exe_dir.is_dir(), f"Missing meta dir for {exe_file.name}"
-            death_dir = meta_exe_dir / "ExeDeathHandler"
-            text_dir = meta_exe_dir / "ExeTextHandler"
-            assert death_dir.is_dir(), "Missing ExeDeathHandler meta subdir"
-            assert text_dir.is_dir(), "Missing ExeTextHandler meta subdir"
-            assert (death_dir / "manifest.json").exists()
-            assert (text_dir / "manifest.json").exists()
+            assert (meta_exe_dir / "manifest.json").exists()
 
     def test_level_files_copied_to_meta(self, game_dir: Path, tmp_path: Path) -> None:
         unpack_dir = tmp_path / "unpacked"

@@ -115,6 +115,49 @@ class TestDecompress:
         with pytest.raises(ValueError, match="Invalid Huffman tree node"):
             _bt_read(bad_tree, lambda: next(bits))
 
+    def test_no_end_marker_raises(self) -> None:
+        """Data where code image stream ends without 0xFF marker."""
+        # Build minimal valid PKLITE buffer: ver_code 0x210D (large mode)
+        # header_para=7 → header_size=112, stub_size=0x290, comp_start=0x300
+        buf = bytearray(0x303)
+        buf[0:2] = b"MZ"
+        struct.pack_into("<H", buf, 8, 7)
+        buf[0x1C] = 0x0D
+        buf[0x1D] = 0x21  # large mode
+        buf[0x1E : 0x1E + 6] = b"PKLITE"
+        # Compressed data: bit 0 = 0 (literal), then one literal byte
+        # After prime reads 2 bytes at 0x300-0x301, literal reads 0x302
+        # pos=0x303 == len(buf) → while condition fails → else raises
+        buf[0x300] = 0x00
+        buf[0x301] = 0x00
+        buf[0x302] = 0x42
+        with pytest.raises(ValueError, match="end-of-stream marker"):
+            decompress(bytes(buf))
+
+    def test_reloc_table_no_terminator_raises(self) -> None:
+        """Data where reloc table ends without count=0 terminator."""
+        # Same header as above, but with 0xFF end marker for code image
+        # followed by reloc data that lacks a zero-count terminator.
+        buf = bytearray(0x310)
+        buf[0:2] = b"MZ"
+        struct.pack_into("<H", buf, 8, 7)
+        buf[0x1C] = 0x0D
+        buf[0x1D] = 0x21
+        buf[0x1E : 0x1E + 6] = b"PKLITE"
+        # Bit pattern for: duplication mode (1), Huffman -1 (011100), then 0xFF
+        # Bits LSB-first: 1,0,1,1,1,0,0 = 0x1D
+        buf[0x300] = 0x1D
+        buf[0x301] = 0x00
+        buf[0x302] = 0xFF  # end-of-stream marker byte
+        # Reloc table at 0x303: count=1, then one reloc entry (4 bytes)
+        buf[0x303] = 1  # count (non-zero, no break)
+        struct.pack_into("<H", buf, 0x304, 0)  # rel_msb
+        struct.pack_into("<H", buf, 0x306, 0)  # rel_lsb
+        # pos after reloc = 0x308, len(buf)-8 = 0x308 → condition fails → else
+        # Footer (8 bytes of zeros at 0x308)
+        with pytest.raises(ValueError, match="Relocation table"):
+            decompress(bytes(buf))
+
     def test_truncated_compressed_data_raises(self, exe_data: bytes) -> None:
         """Truncated compressed data should raise ValueError."""
         # Truncate at a point that causes get_byte() to fail mid-read.
