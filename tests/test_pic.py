@@ -24,12 +24,15 @@ def handler() -> PicHandler:
 class TestPicUnpack:
     @pytest.mark.parametrize("filename", PIC_FILES)
     def test_unpack_produces_320x200_png(
-        self, handler: PicHandler, game_dir: Path, tmp_output: Path, filename: str
+        self, handler: PicHandler, game_dir: Path, tmp_path: Path, filename: str
     ) -> None:
-        input_path = game_dir / filename
-        manifest = handler.unpack(input_path, tmp_output)
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
+        manifest = handler.unpack(game_dir / filename, translatable, meta)
 
-        png_path = tmp_output / manifest.metadata["image"]
+        png_path = translatable / manifest.metadata["image"]
         assert png_path.exists()
 
         img = Image.open(png_path)
@@ -38,10 +41,13 @@ class TestPicUnpack:
 
     @pytest.mark.parametrize("filename", PIC_FILES)
     def test_unpack_manifest_metadata(
-        self, handler: PicHandler, game_dir: Path, tmp_output: Path, filename: str
+        self, handler: PicHandler, game_dir: Path, tmp_path: Path, filename: str
     ) -> None:
-        input_path = game_dir / filename
-        manifest = handler.unpack(input_path, tmp_output)
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
+        manifest = handler.unpack(game_dir / filename, translatable, meta)
 
         assert manifest.handler == "PicHandler"
         assert manifest.source_file == filename
@@ -50,12 +56,15 @@ class TestPicUnpack:
 
     @pytest.mark.parametrize("filename", PIC_FILES)
     def test_unpack_pixel_values_match_reference(
-        self, handler: PicHandler, game_dir: Path, tmp_output: Path, filename: str
+        self, handler: PicHandler, game_dir: Path, tmp_path: Path, filename: str
     ) -> None:
-        input_path = game_dir / filename
-        manifest = handler.unpack(input_path, tmp_output)
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
+        manifest = handler.unpack(game_dir / filename, translatable, meta)
 
-        png_path = tmp_output / manifest.metadata["image"]
+        png_path = translatable / manifest.metadata["image"]
         img = Image.open(png_path)
         px = img.load()
         assert px is not None
@@ -69,16 +78,20 @@ class TestPicUnpack:
 class TestPicRepack:
     @pytest.mark.parametrize("filename", PIC_FILES)
     def test_repack_byte_exact(
-        self, handler: PicHandler, game_dir: Path, tmp_output: Path, filename: str
+        self, handler: PicHandler, game_dir: Path, tmp_path: Path, filename: str
     ) -> None:
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
         input_path = game_dir / filename
         original = input_path.read_bytes()
 
-        manifest = handler.unpack(input_path, tmp_output)
+        manifest = handler.unpack(input_path, translatable, meta)
 
-        output_path = tmp_output / "repacked" / filename
+        output_path = tmp_path / "repacked" / filename
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        handler.repack(manifest, tmp_output, output_path)
+        handler.repack(manifest, translatable, meta, output_path)
 
         repacked = output_path.read_bytes()
         assert repacked == original
@@ -91,18 +104,18 @@ class TestPicErrors:
         """File that decompresses to non-PIC data should raise ValueError."""
         from gravedigger.compression.huff import compress, decompress
 
-        # Get a real tree from any HUFF file
         raw = (game_dir / "TITLE1.DD2").read_bytes()
         _data, tree = decompress(raw)
 
-        # Compress data with wrong signature
         bad_data = b"BAD\x00" + b"\x28\x00\xc8\x00" + b"\x00" * (40 * 200 * 4)
         bad_dd2 = compress(bad_data, tree)
 
         bad_file = tmp_path / "BAD.DD2"
         bad_file.write_bytes(bad_dd2)
-        out = tmp_path / "out"
-        out.mkdir()
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
 
         with pytest.raises(ValueError, match="PIC signature"):
-            handler.unpack(bad_file, out)
+            handler.unpack(bad_file, translatable, meta)

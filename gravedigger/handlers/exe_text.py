@@ -139,7 +139,7 @@ class ExeTextHandler(FormatHandler):
 
     file_patterns: ClassVar[list[str]] = ["DAVE.EXE", "1.EXE"]
 
-    def unpack(self, input_path: Path, output_dir: Path) -> Manifest:
+    def unpack(self, input_path: Path, translatable_dir: Path, meta_dir: Path) -> Manifest:
         exe_data = input_path.read_bytes()
         decompressed = decompress(exe_data)
 
@@ -160,7 +160,7 @@ class ExeTextHandler(FormatHandler):
             )
 
         strings_data = {"strings": strings}
-        (output_dir / "strings.json").write_text(
+        (translatable_dir / "strings.json").write_text(
             json.dumps(strings_data, indent=2, ensure_ascii=False)
         )
 
@@ -173,10 +173,12 @@ class ExeTextHandler(FormatHandler):
             source_file=input_path.name,
             metadata=metadata,
         )
-        manifest.to_json(output_dir / "manifest.json")
+        manifest.to_json(meta_dir / "manifest.json")
         return manifest
 
-    def repack(self, manifest: Manifest, input_dir: Path, output_path: Path) -> None:
+    def repack(
+        self, manifest: Manifest, translatable_dir: Path, meta_dir: Path, output_path: Path
+    ) -> None:
         meta = manifest.metadata
         original_exe = base64.b64decode(meta["original_exe"])
         decompressed = bytearray(decompress(original_exe))
@@ -184,7 +186,7 @@ class ExeTextHandler(FormatHandler):
         header_para = struct.unpack_from("<H", decompressed, 8)[0]
         code_start = header_para * 16
 
-        strings_data = json.loads((input_dir / "strings.json").read_text())
+        strings_data = json.loads((translatable_dir / "strings.json").read_text())
 
         for entry in strings_data["strings"]:
             code_offset: int = entry["offset"]

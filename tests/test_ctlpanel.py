@@ -25,23 +25,20 @@ class TestCtlPanelHandler:
         self,
         handler: CtlPanelHandler,
         game_dir: Path,
-        tmp_output: Path,
+        tmp_translatable: Path,
+        tmp_meta: Path,
     ) -> None:
-        manifest = handler.unpack(game_dir / "CTLPANEL.DD2", tmp_output)
+        manifest = handler.unpack(game_dir / "CTLPANEL.DD2", tmp_translatable, tmp_meta)
         assert manifest.handler == "CtlPanelHandler"
         assert manifest.source_file == "CTLPANEL.DD2"
 
-        json_path = tmp_output / "ctlpanel.json"
+        json_path = tmp_translatable / "ctlpanel.json"
         assert json_path.exists()
 
         data = json.loads(json_path.read_text())
-        # 10 key scan codes
         assert len(data["keys"]) == 10
-        # All values should be integers (scan codes)
         assert all(isinstance(v, int) for v in data["keys"])
-        # Known scan codes from the default file
         assert data["keys"] == [0x48, 0x49, 0x4D, 0x51, 0x50, 0x4F, 0x4B, 0x47, 0x39, 0x38]
-        # Last 4 bytes as uint32 LE
         assert isinstance(data["extra"], int)
         assert data["extra"] == 0x0003D7FC
 
@@ -49,15 +46,16 @@ class TestCtlPanelHandler:
         self,
         handler: CtlPanelHandler,
         game_dir: Path,
-        tmp_output: Path,
+        tmp_translatable: Path,
+        tmp_meta: Path,
     ) -> None:
         original_path = game_dir / "CTLPANEL.DD2"
         original_data = original_path.read_bytes()
 
-        handler.unpack(original_path, tmp_output)
-        manifest = Manifest.from_json(tmp_output / "manifest.json")
-        repacked_path = tmp_output / "repacked.dd2"
-        handler.repack(manifest, tmp_output, repacked_path)
+        handler.unpack(original_path, tmp_translatable, tmp_meta)
+        manifest = Manifest.from_json(tmp_meta / "manifest.json")
+        repacked_path = tmp_meta / "repacked.dd2"
+        handler.repack(manifest, tmp_translatable, tmp_meta, repacked_path)
 
         repacked_data = repacked_path.read_bytes()
         assert repacked_data == original_data
@@ -77,12 +75,14 @@ class TestCtlPanelHandler:
         input_file = tmp_path / "CTLPANEL.DD2"
         input_file.write_bytes(raw)
 
-        out_dir = tmp_path / "out"
-        out_dir.mkdir()
-        handler.unpack(input_file, out_dir)
-        manifest_loaded = Manifest.from_json(out_dir / "manifest.json")
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
+        handler.unpack(input_file, translatable, meta)
+        manifest_loaded = Manifest.from_json(meta / "manifest.json")
         repacked = tmp_path / "repacked.dd2"
-        handler.repack(manifest_loaded, out_dir, repacked)
+        handler.repack(manifest_loaded, translatable, meta, repacked)
 
         assert repacked.read_bytes() == raw
 
@@ -93,7 +93,9 @@ class TestCtlPanelHandler:
     ) -> None:
         bad_file = tmp_path / "CTLPANEL.DD2"
         bad_file.write_bytes(b"\x00" * 5)
-        out_dir = tmp_path / "out"
-        out_dir.mkdir()
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
         with pytest.raises(ValueError, match="Expected 14 bytes"):
-            handler.unpack(bad_file, out_dir)
+            handler.unpack(bad_file, translatable, meta)

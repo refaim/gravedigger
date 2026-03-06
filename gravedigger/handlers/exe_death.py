@@ -77,7 +77,7 @@ class ExeDeathHandler(FormatHandler):
 
     file_patterns: ClassVar[list[str]] = ["DAVE.EXE", "1.EXE"]
 
-    def unpack(self, input_path: Path, output_dir: Path) -> Manifest:
+    def unpack(self, input_path: Path, translatable_dir: Path, meta_dir: Path) -> Manifest:
         exe_data = input_path.read_bytes()
         decompressed = decompress(exe_data)
 
@@ -87,12 +87,15 @@ class ExeDeathHandler(FormatHandler):
 
         block = decompressed[death_offset : death_offset + _BLOCK_SIZE]
 
+        death_dir = translatable_dir / "death"
+        death_dir.mkdir(parents=True, exist_ok=True)
+
         for seq in range(_SEQUENCE_COUNT):
             for frame in range(_FRAMES_PER_SEQUENCE):
                 frame_index = seq * _FRAMES_PER_SEQUENCE + frame
                 pixels = _decode_frame(block, frame_index)
                 img = pixels_to_image(pixels, _FRAME_WIDTH, _FRAME_HEIGHT)
-                img.save(output_dir / f"death_seq{seq + 1}_frame{frame + 1}.png")
+                img.save(death_dir / f"seq{seq + 1}_frame{frame + 1}.png")
 
         metadata: dict[str, Any] = {
             "sequence_count": _SEQUENCE_COUNT,
@@ -107,10 +110,12 @@ class ExeDeathHandler(FormatHandler):
             source_file=input_path.name,
             metadata=metadata,
         )
-        manifest.to_json(output_dir / "manifest.json")
+        manifest.to_json(meta_dir / "manifest.json")
         return manifest
 
-    def repack(self, manifest: Manifest, input_dir: Path, output_path: Path) -> None:
+    def repack(
+        self, manifest: Manifest, translatable_dir: Path, meta_dir: Path, output_path: Path
+    ) -> None:
         from PIL import Image
 
         meta = manifest.metadata
@@ -130,10 +135,11 @@ class ExeDeathHandler(FormatHandler):
             plane_start = _MAGIC * plane
             block[plane_start : plane_start + frame_data_total] = b"\x00" * frame_data_total
 
+        death_dir = translatable_dir / "death"
         for seq in range(_SEQUENCE_COUNT):
             for frame in range(_FRAMES_PER_SEQUENCE):
                 frame_index = seq * _FRAMES_PER_SEQUENCE + frame
-                img = Image.open(input_dir / f"death_seq{seq + 1}_frame{frame + 1}.png")
+                img = Image.open(death_dir / f"seq{seq + 1}_frame{frame + 1}.png")
                 pixels = image_to_pixels(img)
                 _encode_frame(pixels, block, frame_index)
 

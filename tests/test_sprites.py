@@ -25,32 +25,32 @@ class TestUnpackDave:
     """Unpack S_DAVE.DD2 and verify sprite properties."""
 
     def test_unpack_sprite_count(
-        self, handler: SpriteHandler, game_dir: Path, tmp_output: Path
+        self, handler: SpriteHandler, game_dir: Path, tmp_translatable: Path, tmp_meta: Path
     ) -> None:
-        manifest = handler.unpack(game_dir / "S_DAVE.DD2", tmp_output)
+        manifest = handler.unpack(game_dir / "S_DAVE.DD2", tmp_translatable, tmp_meta)
         sprites = manifest.metadata["sprites"]
         assert len(sprites) == len(SPRITE_SIZES["S_DAVE.DD2"])
 
     def test_first_sprite_size(
-        self, handler: SpriteHandler, game_dir: Path, tmp_output: Path
+        self, handler: SpriteHandler, game_dir: Path, tmp_translatable: Path, tmp_meta: Path
     ) -> None:
-        handler.unpack(game_dir / "S_DAVE.DD2", tmp_output)
-        img = Image.open(tmp_output / "sprite_0000.png")
+        handler.unpack(game_dir / "S_DAVE.DD2", tmp_translatable, tmp_meta)
+        img = Image.open(tmp_translatable / "sprites" / "dave_0000.png")
         assert img.size == (24, 32)
 
     def test_manifest_contains_sprite_sizes(
-        self, handler: SpriteHandler, game_dir: Path, tmp_output: Path
+        self, handler: SpriteHandler, game_dir: Path, tmp_translatable: Path, tmp_meta: Path
     ) -> None:
-        manifest = handler.unpack(game_dir / "S_DAVE.DD2", tmp_output)
+        manifest = handler.unpack(game_dir / "S_DAVE.DD2", tmp_translatable, tmp_meta)
         sprites = manifest.metadata["sprites"]
         assert sprites[0]["width"] == 24
         assert sprites[0]["height"] == 32
 
     def test_manifest_saved_to_disk(
-        self, handler: SpriteHandler, game_dir: Path, tmp_output: Path
+        self, handler: SpriteHandler, game_dir: Path, tmp_translatable: Path, tmp_meta: Path
     ) -> None:
-        handler.unpack(game_dir / "S_DAVE.DD2", tmp_output)
-        loaded = Manifest.from_json(tmp_output / "manifest.json")
+        handler.unpack(game_dir / "S_DAVE.DD2", tmp_translatable, tmp_meta)
+        loaded = Manifest.from_json(tmp_meta / "manifest.json")
         assert loaded.handler == "SpriteHandler"
         assert loaded.source_file == "S_DAVE.DD2"
         assert len(loaded.metadata["sprites"]) == len(SPRITE_SIZES["S_DAVE.DD2"])
@@ -60,7 +60,7 @@ class TestUnpackDave:
         bad_file = tmp_path / "S_UNKNOWN.DD2"
         bad_file.write_bytes(b"\x00" * 100)
         with pytest.raises(ValueError, match="Unknown sprite file"):
-            handler.unpack(bad_file, tmp_path / "out")
+            handler.unpack(bad_file, tmp_path / "out", tmp_path / "meta")
 
 
 class TestRepackRoundtrip:
@@ -71,13 +71,17 @@ class TestRepackRoundtrip:
         self,
         handler: SpriteHandler,
         game_dir: Path,
-        tmp_output: Path,
+        tmp_path: Path,
         filename: str,
     ) -> None:
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
         original = (game_dir / filename).read_bytes()
-        manifest = handler.unpack(game_dir / filename, tmp_output)
-        repacked_path = tmp_output / "repacked.DD2"
-        handler.repack(manifest, tmp_output, repacked_path)
+        manifest = handler.unpack(game_dir / filename, translatable, meta)
+        repacked_path = tmp_path / "repacked.DD2"
+        handler.repack(manifest, translatable, meta, repacked_path)
         repacked = repacked_path.read_bytes()
         assert repacked == original, f"Repacked {filename} differs from original"
 
@@ -93,16 +97,19 @@ class TestAllSpriteFiles:
         tmp_path: Path,
         filename: str,
     ) -> None:
-        out = tmp_path / filename.replace(".DD2", "")
-        out.mkdir()
-        manifest = handler.unpack(game_dir / filename, out)
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
+        manifest = handler.unpack(game_dir / filename, translatable, meta)
         sprites = manifest.metadata["sprites"]
         expected = len(SPRITE_SIZES[filename])
         assert len(sprites) == expected
 
-        # Check each PNG has correct dimensions
+        prefix = filename.removesuffix(".DD2").lower().removeprefix("s_")
+        sprites_dir = translatable / "sprites"
         for i, sp in enumerate(sprites):
-            img = Image.open(out / f"sprite_{i:04d}.png")
+            img = Image.open(sprites_dir / f"{prefix}_{i:04d}.png")
             assert img.size == (sp["width"], sp["height"]), (
                 f"{filename} sprite {i}: expected {sp['width']}x{sp['height']}, got {img.size}"
             )

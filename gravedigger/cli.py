@@ -1,22 +1,24 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
 from gravedigger import __version__
 from gravedigger.core.handler import Manifest
 from gravedigger.core.registry import Registry
-from gravedigger.handlers.ctlpanel import CtlPanelHandler
 from gravedigger.handlers.exe_death import ExeDeathHandler
 from gravedigger.handlers.exe_text import ExeTextHandler
 from gravedigger.handlers.intro import IntroHandler
-from gravedigger.handlers.level import LevelHandler
 from gravedigger.handlers.pic import PicHandler
 from gravedigger.handlers.sprites import SpriteHandler
 from gravedigger.handlers.tiles import TileHandler
 
 _EXE_SUFFIXES = {".EXE"}
+_GAME_SUFFIXES = {".DD2", *_EXE_SUFFIXES}
+_TRANSLATABLE = "translatable"
+_META = "meta"
 
 
 def _build_registry() -> Registry:
@@ -24,9 +26,7 @@ def _build_registry() -> Registry:
     reg.register(PicHandler())
     reg.register(SpriteHandler())
     reg.register(TileHandler())
-    reg.register(LevelHandler())
     reg.register(IntroHandler())
-    reg.register(CtlPanelHandler())
     reg.register(ExeDeathHandler())
     reg.register(ExeTextHandler())
     return reg
@@ -41,31 +41,38 @@ def _cmd_unpack(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     game_files = sorted(
-        p for p in game_dir.iterdir() if p.suffix.upper() in (".DD2", *_EXE_SUFFIXES)
+        p for p in game_dir.iterdir() if p.suffix.upper() in _GAME_SUFFIXES
     )
     if not game_files:
         print(f"Error: no game files found in {game_dir}", file=sys.stderr)
         sys.exit(1)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    translatable_root = output_dir / _TRANSLATABLE
+    meta_root = output_dir / _META
+    translatable_root.mkdir(parents=True, exist_ok=True)
+    meta_root.mkdir(parents=True, exist_ok=True)
+
     registry = _build_registry()
 
     for game_file in game_files:
         handlers = registry.get_handlers(game_file.name)
+
         if not handlers:
-            print(f"Skipping {game_file.name}: no handler registered")
+            # No handler — copy original to meta/ for full game restoration
+            shutil.copy2(game_file, meta_root / game_file.name)
+            print(f"Copied {game_file.name} (no handler)")
             continue
 
         if len(handlers) == 1:
-            file_output_dir = output_dir / game_file.stem
-            file_output_dir.mkdir(parents=True, exist_ok=True)
-            handlers[0].unpack(game_file, file_output_dir)
+            meta_dir = meta_root / game_file.stem
+            meta_dir.mkdir(parents=True, exist_ok=True)
+            handlers[0].unpack(game_file, translatable_root, meta_dir)
         else:
             for handler in handlers:
                 handler_name = type(handler).__name__
-                file_output_dir = output_dir / game_file.stem / handler_name
-                file_output_dir.mkdir(parents=True, exist_ok=True)
-                handler.unpack(game_file, file_output_dir)
+                meta_dir = meta_root / game_file.stem / handler_name
+                meta_dir.mkdir(parents=True, exist_ok=True)
+                handler.unpack(game_file, translatable_root, meta_dir)
 
         print(f"Unpacked {game_file.name}")
 
@@ -78,27 +85,45 @@ def _cmd_repack(args: argparse.Namespace) -> None:
         print(f"Error: input directory does not exist: {input_dir}", file=sys.stderr)
         sys.exit(1)
 
-    manifest_files = sorted(input_dir.rglob("manifest.json"))
-    if not manifest_files:
-        print(f"Error: no manifest.json files found in {input_dir}", file=sys.stderr)
+    meta_root = input_dir / _META
+    translatable_root = input_dir / _TRANSLATABLE
+
+    if not meta_root.is_dir():
+        print(f"Error: meta directory not found in {input_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    manifest_files = sorted(meta_root.rglob("manifest.json"))
+
+    # Original files (no handler) are stored directly in meta/ as regular files
+    originals = sorted(p for p in meta_root.iterdir() if p.is_file())
+
+    if not manifest_files and not originals:
+        print(f"Error: no manifest.json files or originals found in {meta_root}", file=sys.stderr)
         sys.exit(1)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     registry = _build_registry()
 
+    # Copy original files (levels, unhandled files) directly
+    for original in originals:
+        shutil.copy2(original, output_dir / original.name)
+        print(f"Copied {original.name}")
+
     # Group manifests by source file for chained repack (e.g. multiple EXE handlers)
-    by_source: dict[str, list[tuple[Manifest, Path]]] = {}
+    by_source: dict[str, list[tuple[Manifest, Path, Path]]] = {}
     for manifest_path in manifest_files:
         manifest = Manifest.from_json(manifest_path)
-        by_source.setdefault(manifest.source_file, []).append((manifest, manifest_path.parent))
+        by_source.setdefault(manifest.source_file, []).append(
+            (manifest, manifest_path.parent, translatable_root)
+        )
 
     for source_file, entries in sorted(by_source.items()):
         # Filter to entries with registered handlers
-        valid_entries: list[tuple[Manifest, Path]] = []
-        for manifest, manifest_dir in entries:
+        valid_entries: list[tuple[Manifest, Path, Path]] = []
+        for manifest, meta_dir, translatable_dir in entries:
             try:
                 registry.get_handler_by_name(manifest.handler)
-                valid_entries.append((manifest, manifest_dir))
+                valid_entries.append((manifest, meta_dir, translatable_dir))
             except KeyError:
                 print(f"Skipping {manifest.handler} for {source_file}: no handler registered")
 
@@ -108,9 +133,9 @@ def _cmd_repack(args: argparse.Namespace) -> None:
         output_path = output_dir / source_file
 
         if len(valid_entries) == 1:
-            manifest, manifest_dir = valid_entries[0]
+            manifest, meta_dir, translatable_dir = valid_entries[0]
             handler = registry.get_handler_by_name(manifest.handler)
-            handler.repack(manifest, manifest_dir, output_path)
+            handler.repack(manifest, translatable_dir, meta_dir, output_path)
         else:
             _repack_chained(valid_entries, registry, output_path)
 
@@ -118,32 +143,27 @@ def _cmd_repack(args: argparse.Namespace) -> None:
 
 
 def _repack_chained(
-    entries: list[tuple[Manifest, Path]],
+    entries: list[tuple[Manifest, Path, Path]],
     registry: Registry,
     output_path: Path,
 ) -> None:
-    """Repack multiple handlers for the same source file sequentially.
-
-    Each handler repacks to a temporary file, and subsequent handlers
-    use the previous output as their original EXE template.
-    """
+    """Repack multiple handlers for the same source file sequentially."""
     import base64
     import tempfile
 
     current_exe: bytes | None = None
 
-    for manifest, manifest_dir in entries:
+    for manifest, meta_dir, translatable_dir in entries:
         handler = registry.get_handler_by_name(manifest.handler)
 
         if current_exe is not None:
-            # Update the manifest's original_exe to use the previous handler's output
             manifest.metadata["original_exe"] = base64.b64encode(current_exe).decode()
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".exe") as tmp:
             tmp_path = Path(tmp.name)
 
         try:
-            handler.repack(manifest, manifest_dir, tmp_path)
+            handler.repack(manifest, translatable_dir, meta_dir, tmp_path)
             current_exe = tmp_path.read_bytes()
         finally:
             tmp_path.unlink(missing_ok=True)
@@ -165,7 +185,7 @@ def main() -> None:
     unpack_parser.add_argument("output_dir", help="Output directory for unpacked files")
 
     repack_parser = subparsers.add_parser("repack", help="Repack edited files back to .DD2")
-    repack_parser.add_argument("input_dir", help="Directory with unpacked files and manifests")
+    repack_parser.add_argument("input_dir", help="Directory with translatable/ and meta/")
     repack_parser.add_argument("output_dir", help="Output directory for repacked .DD2 files")
 
     args = parser.parse_args()

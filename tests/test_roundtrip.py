@@ -12,14 +12,17 @@ from gravedigger.cli import _build_registry
 from gravedigger.core.handler import Manifest
 
 
-def _all_dd2_files() -> list[str]:
+def _handled_dd2_files() -> list[str]:
     game = Path(__file__).resolve().parent.parent / "game"
     if not game.is_dir():
         return []
-    return sorted(p.name for p in game.glob("*.DD2"))
+    registry = _build_registry()
+    return sorted(
+        p.name for p in game.glob("*.DD2") if registry.get_handlers(p.name)
+    )
 
 
-ALL_DD2 = _all_dd2_files()
+ALL_DD2 = _handled_dd2_files()
 
 
 # ---------------------------------------------------------------------------
@@ -37,13 +40,15 @@ class TestHandlerRoundtrip:
         handler = registry.get_handler(filename)
 
         # Unpack
-        unpack_dir = tmp_path / "unpacked"
-        unpack_dir.mkdir()
-        manifest = handler.unpack(original, unpack_dir)
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
+        manifest = handler.unpack(original, translatable, meta)
 
         # Repack
         repacked = tmp_path / "repacked.DD2"
-        handler.repack(manifest, unpack_dir, repacked)
+        handler.repack(manifest, translatable, meta, repacked)
 
         assert repacked.read_bytes() == original.read_bytes(), (
             f"Byte-exact roundtrip failed for {filename}"
@@ -54,11 +59,13 @@ class TestHandlerRoundtrip:
         registry = _build_registry()
         handler = registry.get_handler(filename)
 
-        unpack_dir = tmp_path / "unpacked"
-        unpack_dir.mkdir()
-        handler.unpack(original, unpack_dir)
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
+        handler.unpack(original, translatable, meta)
 
-        manifest_path = unpack_dir / "manifest.json"
+        manifest_path = meta / "manifest.json"
         assert manifest_path.exists(), "manifest.json not created"
 
         manifest = Manifest.from_json(manifest_path)
@@ -92,7 +99,7 @@ class TestCLIFullCycle:
         result = _run_cli("repack", str(unpack_dir), str(repack_dir))
         assert result.returncode == 0, f"repack failed:\n{result.stderr}"
 
-        # Check DD2 files
+        # Check DD2 files (handled ones are repacked, unhandled are copied from originals)
         originals = sorted(game_dir.glob("*.DD2"))
         assert len(originals) > 0
 
@@ -111,17 +118,20 @@ class TestCLIFullCycle:
                 f"CLI EXE roundtrip byte mismatch: {original.name}"
             )
 
-    def test_unpack_creates_all_subdirs(self, game_dir: Path, tmp_path: Path) -> None:
+    def test_unpack_creates_translatable_and_meta(
+        self, game_dir: Path, tmp_path: Path
+    ) -> None:
         unpack_dir = tmp_path / "unpacked"
 
         result = _run_cli("unpack", str(game_dir), str(unpack_dir))
         assert result.returncode == 0, f"unpack failed:\n{result.stderr}"
 
-        originals = sorted(game_dir.glob("*.DD2"))
-        for original in originals:
-            subdir = unpack_dir / original.stem
-            assert subdir.is_dir(), f"Missing subdir for {original.name}"
-            assert (subdir / "manifest.json").exists(), f"Missing manifest.json in {subdir.name}"
+        assert (unpack_dir / "translatable").is_dir()
+        assert (unpack_dir / "meta").is_dir()
+
+        # Manifests should be under meta/
+        manifests = list((unpack_dir / "meta").rglob("manifest.json"))
+        assert len(manifests) >= 1
 
     def test_exe_unpack_creates_handler_subdirs(self, game_dir: Path, tmp_path: Path) -> None:
         unpack_dir = tmp_path / "unpacked"
@@ -131,11 +141,24 @@ class TestCLIFullCycle:
 
         # EXE files with multiple handlers get per-handler subdirectories
         for exe_file in sorted(game_dir.glob("*.EXE")):
-            exe_dir = unpack_dir / exe_file.stem
-            assert exe_dir.is_dir(), f"Missing dir for {exe_file.name}"
-            death_dir = exe_dir / "ExeDeathHandler"
-            text_dir = exe_dir / "ExeTextHandler"
-            assert death_dir.is_dir(), "Missing ExeDeathHandler subdir"
-            assert text_dir.is_dir(), "Missing ExeTextHandler subdir"
+            meta_exe_dir = unpack_dir / "meta" / exe_file.stem
+            assert meta_exe_dir.is_dir(), f"Missing meta dir for {exe_file.name}"
+            death_dir = meta_exe_dir / "ExeDeathHandler"
+            text_dir = meta_exe_dir / "ExeTextHandler"
+            assert death_dir.is_dir(), "Missing ExeDeathHandler meta subdir"
+            assert text_dir.is_dir(), "Missing ExeTextHandler meta subdir"
             assert (death_dir / "manifest.json").exists()
             assert (text_dir / "manifest.json").exists()
+
+    def test_level_files_copied_to_meta(self, game_dir: Path, tmp_path: Path) -> None:
+        unpack_dir = tmp_path / "unpacked"
+
+        result = _run_cli("unpack", str(game_dir), str(unpack_dir))
+        assert result.returncode == 0, f"unpack failed:\n{result.stderr}"
+
+        meta_dir = unpack_dir / "meta"
+
+        for level_file in sorted(game_dir.glob("LEVEL*.DD2")):
+            copied = meta_dir / level_file.name
+            assert copied.exists(), f"Missing original: {level_file.name}"
+            assert copied.read_bytes() == level_file.read_bytes()

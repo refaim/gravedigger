@@ -230,7 +230,7 @@ class SpriteHandler(FormatHandler):
         "S_MASTER.DD2",
     ]
 
-    def unpack(self, input_path: Path, output_dir: Path) -> Manifest:
+    def unpack(self, input_path: Path, translatable_dir: Path, meta_dir: Path) -> Manifest:
         filename = input_path.name
         if filename not in SPRITE_SIZES:
             msg = f"Unknown sprite file: {filename!r}"
@@ -247,6 +247,12 @@ class SpriteHandler(FormatHandler):
 
         sizes = SPRITE_SIZES[filename]
 
+        # Derive prefix from source filename: S_DAVE.DD2 -> dave, S_CHUNK1.DD2 -> chunk1
+        prefix = input_path.stem.lower().removeprefix("s_")
+
+        sprites_dir = translatable_dir / "sprites"
+        sprites_dir.mkdir(parents=True, exist_ok=True)
+
         sprites_meta: list[dict[str, Any]] = []
         offset = _PLANE_HEADER  # sprite data starts 8 bytes into each plane
 
@@ -260,12 +266,13 @@ class SpriteHandler(FormatHandler):
 
             pixels = decode_planar(planes, w, h)
             img = pixels_to_image(pixels, w, h)
-            img.save(output_dir / f"sprite_{i:04d}.png")
+            img.save(sprites_dir / f"{prefix}_{i:04d}.png")
 
             sprites_meta.append({"width": w, "height": h})
             offset += plane_chunk
 
         metadata: dict[str, Any] = {
+            "prefix": prefix,
             "sprites": sprites_meta,
             "huff_tree": base64.b64encode(huff_tree).decode(),
             "blob": base64.b64encode(bytes(blob)).decode(),
@@ -276,23 +283,28 @@ class SpriteHandler(FormatHandler):
             source_file=filename,
             metadata=metadata,
         )
-        manifest.to_json(output_dir / "manifest.json")
+        manifest.to_json(meta_dir / "manifest.json")
         return manifest
 
-    def repack(self, manifest: Manifest, input_dir: Path, output_path: Path) -> None:
+    def repack(
+        self, manifest: Manifest, translatable_dir: Path, meta_dir: Path, output_path: Path
+    ) -> None:
         from PIL import Image
 
         sprites_meta: list[dict[str, int]] = manifest.metadata["sprites"]
+        prefix: str = manifest.metadata["prefix"]
         huff_tree = base64.b64decode(manifest.metadata["huff_tree"])
         blob = bytearray(base64.b64decode(manifest.metadata["blob"]))
 
         plane_stride = len(blob) // _NUM_PLANES
 
+        sprites_dir = translatable_dir / "sprites"
+
         # Write modified sprite pixels back into the blob
         offset = _PLANE_HEADER
         for i, sp in enumerate(sprites_meta):
             w, h = sp["width"], sp["height"]
-            img = Image.open(input_dir / f"sprite_{i:04d}.png")
+            img = Image.open(sprites_dir / f"{prefix}_{i:04d}.png")
             pixels = image_to_pixels(img)
             planar = encode_planar(pixels, w, h)
             plane_chunk = len(planar) // 4

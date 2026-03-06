@@ -7,31 +7,36 @@ from gravedigger.handlers.tiles import TileHandler
 
 
 class TestTileHandlerUnpack:
-    def test_unpack_creates_pngs(self, game_dir: Path, tmp_output: Path) -> None:
+    def test_unpack_creates_pngs(
+        self, game_dir: Path, tmp_translatable: Path, tmp_meta: Path
+    ) -> None:
         handler = TileHandler()
-        manifest = handler.unpack(game_dir / "EGATILES.DD2", tmp_output)
+        manifest = handler.unpack(game_dir / "EGATILES.DD2", tmp_translatable, tmp_meta)
         assert manifest.handler == "TileHandler"
         assert manifest.source_file == "EGATILES.DD2"
         assert manifest.metadata["total_tiles"] == 858
-        # Check all 858 PNGs exist
+        tiles_dir = tmp_translatable / "tiles"
         for i in range(858):
-            png = tmp_output / f"tile_{i:04d}.png"
+            png = tiles_dir / f"tile_{i:04d}.png"
             assert png.exists(), f"Missing {png.name}"
 
-    def test_tile_dimensions(self, game_dir: Path, tmp_output: Path) -> None:
+    def test_tile_dimensions(
+        self, game_dir: Path, tmp_translatable: Path, tmp_meta: Path
+    ) -> None:
         handler = TileHandler()
-        handler.unpack(game_dir / "EGATILES.DD2", tmp_output)
-        # First tile
-        img = Image.open(tmp_output / "tile_0000.png")
+        handler.unpack(game_dir / "EGATILES.DD2", tmp_translatable, tmp_meta)
+        tiles_dir = tmp_translatable / "tiles"
+        img = Image.open(tiles_dir / "tile_0000.png")
         assert img.size == (16, 16)
-        # Last tile
-        img = Image.open(tmp_output / "tile_0857.png")
+        img = Image.open(tiles_dir / "tile_0857.png")
         assert img.size == (16, 16)
 
-    def test_manifest_file_written(self, game_dir: Path, tmp_output: Path) -> None:
+    def test_manifest_file_written(
+        self, game_dir: Path, tmp_translatable: Path, tmp_meta: Path
+    ) -> None:
         handler = TileHandler()
-        handler.unpack(game_dir / "EGATILES.DD2", tmp_output)
-        manifest_path = tmp_output / "manifest.json"
+        handler.unpack(game_dir / "EGATILES.DD2", tmp_translatable, tmp_meta)
+        manifest_path = tmp_meta / "manifest.json"
         assert manifest_path.exists()
         loaded = Manifest.from_json(manifest_path)
         assert loaded.handler == "TileHandler"
@@ -39,14 +44,16 @@ class TestTileHandlerUnpack:
 
 
 class TestTileHandlerRepack:
-    def test_repack_byte_exact(self, game_dir: Path, tmp_output: Path) -> None:
+    def test_repack_byte_exact(
+        self, game_dir: Path, tmp_translatable: Path, tmp_meta: Path
+    ) -> None:
         original = (game_dir / "EGATILES.DD2").read_bytes()
         handler = TileHandler()
-        handler.unpack(game_dir / "EGATILES.DD2", tmp_output)
+        handler.unpack(game_dir / "EGATILES.DD2", tmp_translatable, tmp_meta)
 
-        manifest = Manifest.from_json(tmp_output / "manifest.json")
-        repack_path = tmp_output / "EGATILES.DD2"
-        handler.repack(manifest, tmp_output, repack_path)
+        manifest = Manifest.from_json(tmp_meta / "manifest.json")
+        repack_path = tmp_meta / "EGATILES.DD2"
+        handler.repack(manifest, tmp_translatable, tmp_meta, repack_path)
 
         repacked = repack_path.read_bytes()
         assert repacked == original

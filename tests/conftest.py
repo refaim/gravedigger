@@ -16,3 +16,17 @@ def tmp_output(tmp_path: Path) -> Path:
     out = tmp_path / "output"
     out.mkdir()
     return out
+
+
+@pytest.fixture()
+def tmp_translatable(tmp_path: Path) -> Path:
+    out = tmp_path / "translatable"
+    out.mkdir()
+    return out
+
+
+@pytest.fixture()
+def tmp_meta(tmp_path: Path) -> Path:
+    out = tmp_path / "meta"
+    out.mkdir()
+    return out

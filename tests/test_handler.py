@@ -16,17 +16,27 @@ class TestFormatHandlerABC:
         class FakeHandler(FormatHandler):
             file_patterns: ClassVar[list[str]] = ["FAKE*.DD2"]
 
-            def unpack(self, input_path: Path, output_dir: Path) -> Manifest:
+            def unpack(
+                self, input_path: Path, translatable_dir: Path, meta_dir: Path
+            ) -> Manifest:
                 return Manifest(
                     handler="FakeHandler",
                     source_file=input_path.name,
                 )
 
-            def repack(self, manifest: Manifest, input_dir: Path, output_path: Path) -> None:
+            def repack(
+                self,
+                manifest: Manifest,
+                translatable_dir: Path,
+                meta_dir: Path,
+                output_path: Path,
+            ) -> None:
                 pass
 
         handler = FakeHandler()
-        manifest = handler.unpack(tmp_path / "FAKE1.DD2", tmp_path / "out")
+        manifest = handler.unpack(
+            tmp_path / "FAKE1.DD2", tmp_path / "translatable", tmp_path / "meta"
+        )
         assert manifest.handler == "FakeHandler"
         assert manifest.source_file == "FAKE1.DD2"
 

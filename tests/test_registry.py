@@ -10,20 +10,24 @@ from gravedigger.core.registry import Registry
 class FakeHandler(FormatHandler):
     file_patterns: ClassVar[list[str]] = ["TITLE*.DD2", "PROGPIC.DD2", "STARPIC.DD2"]
 
-    def unpack(self, input_path: Path, output_dir: Path) -> Manifest:
+    def unpack(self, input_path: Path, translatable_dir: Path, meta_dir: Path) -> Manifest:
         return Manifest(handler="FakeHandler", source_file=input_path.name)
 
-    def repack(self, manifest: Manifest, input_dir: Path, output_path: Path) -> None:
+    def repack(
+        self, manifest: Manifest, translatable_dir: Path, meta_dir: Path, output_path: Path
+    ) -> None:
         pass
 
 
 class AnotherHandler(FormatHandler):
     file_patterns: ClassVar[list[str]] = ["LEVEL*.DD2"]
 
-    def unpack(self, input_path: Path, output_dir: Path) -> Manifest:
+    def unpack(self, input_path: Path, translatable_dir: Path, meta_dir: Path) -> Manifest:
         return Manifest(handler="AnotherHandler", source_file=input_path.name)
 
-    def repack(self, manifest: Manifest, input_dir: Path, output_path: Path) -> None:
+    def repack(
+        self, manifest: Manifest, translatable_dir: Path, meta_dir: Path, output_path: Path
+    ) -> None:
         pass
 
 

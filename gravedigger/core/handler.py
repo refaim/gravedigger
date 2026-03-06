@@ -43,11 +43,17 @@ class FormatHandler(ABC):
     file_patterns: ClassVar[list[str]]
 
     @abstractmethod
-    def unpack(self, input_path: Path, output_dir: Path) -> Manifest:
-        """Unpack a .DD2 file into editable formats."""
+    def unpack(self, input_path: Path, translatable_dir: Path, meta_dir: Path) -> Manifest:
+        """Unpack a game file into editable formats.
+
+        Translatable files (PNGs, JSON for editing) go to translatable_dir.
+        Metadata files (manifests, binary blobs) go to meta_dir.
+        """
         ...
 
     @abstractmethod
-    def repack(self, manifest: Manifest, input_dir: Path, output_path: Path) -> None:
-        """Repack edited files back into a .DD2 file."""
+    def repack(
+        self, manifest: Manifest, translatable_dir: Path, meta_dir: Path, output_path: Path
+    ) -> None:
+        """Repack edited files back into a game file."""
         ...

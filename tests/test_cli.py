@@ -46,13 +46,13 @@ class TestUnpack:
     def test_unpack_creates_output(self, game_dir: Path, tmp_output: Path) -> None:
         with patch("sys.argv", ["gravedigger", "unpack", str(game_dir), str(tmp_output)]):
             main()
-        subdirs = [p for p in tmp_output.iterdir() if p.is_dir()]
-        assert len(subdirs) > 0
+        assert (tmp_output / "translatable").is_dir()
+        assert (tmp_output / "meta").is_dir()
 
     def test_unpack_creates_manifests(self, game_dir: Path, tmp_output: Path) -> None:
         with patch("sys.argv", ["gravedigger", "unpack", str(game_dir), str(tmp_output)]):
             main()
-        manifests = list(tmp_output.rglob("manifest.json"))
+        manifests = list((tmp_output / "meta").rglob("manifest.json"))
         assert len(manifests) >= 1
 
     def test_unpack_nonexistent_dir(self, tmp_path: Path) -> None:
@@ -77,20 +77,15 @@ class TestUnpack:
         assert exc.value.code != 0
 
     def test_unpack_skips_unknown_files(self, tmp_path: Path) -> None:
-        """DD2 file with no matching handler is skipped, not errored."""
+        """DD2 file with no matching handler is copied to originals, not errored."""
         game = tmp_path / "game"
         game.mkdir()
         (game / "UNKNOWN.DD2").write_bytes(b"\x00" * 64)
-        # Also add a real file so the "no DD2 files" check doesn't fire
-        # but UNKNOWN.DD2 doesn't match any handler
-        # Since all files are unknown, we need at least one valid one to avoid the "no DD2" error
-        # Actually, the code only checks *.DD2 glob, so UNKNOWN.DD2 counts. But it won't match
-        # any handler, so it gets skipped. If ALL are skipped, we still exit 0.
         out = tmp_path / "out"
         with patch("sys.argv", ["gravedigger", "unpack", str(game), str(out)]):
             main()
-        # No subdirectory created for unknown file
-        assert not (out / "UNKNOWN").exists()
+        # Unknown files go to meta/ directly
+        assert (out / "meta" / "UNKNOWN.DD2").exists()
 
 
 class TestRepack:
@@ -159,18 +154,29 @@ class TestRepack:
             main()
         assert exc.value.code != 0
 
+    def test_repack_empty_meta_dir(self, tmp_path: Path) -> None:
+        """meta/ exists but has no manifests or originals."""
+        base = tmp_path / "unpacked"
+        (base / "meta").mkdir(parents=True)
+        with (
+            patch("sys.argv", ["gravedigger", "repack", str(base), str(tmp_path / "out")]),
+            pytest.raises(SystemExit) as exc,
+        ):
+            main()
+        assert exc.value.code != 0
+
     def test_repack_skips_unknown_handler(self, tmp_path: Path) -> None:
-        """Manifest referencing an unknown file is skipped gracefully."""
+        """Manifest referencing an unknown handler is skipped gracefully."""
         import json
 
-        unpack_dir = tmp_path / "unpacked" / "UNKNOWN"
-        unpack_dir.mkdir(parents=True)
+        meta_dir = tmp_path / "unpacked" / "meta" / "UNKNOWN"
+        meta_dir.mkdir(parents=True)
         manifest = {
             "handler": "FakeHandler",
             "source_file": "UNKNOWN.DD2",
             "metadata": {},
         }
-        (unpack_dir / "manifest.json").write_text(json.dumps(manifest))
+        (meta_dir / "manifest.json").write_text(json.dumps(manifest))
 
         out = tmp_path / "out"
         with patch("sys.argv", ["gravedigger", "repack", str(tmp_path / "unpacked"), str(out)]):

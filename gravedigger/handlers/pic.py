@@ -31,7 +31,7 @@ _PIC_HEADER_SIZE = 8  # 4 bytes sig + 2 bytes width_bytes + 2 bytes height
 class PicHandler(FormatHandler):
     file_patterns: ClassVar[list[str]] = ["TITLE1.DD2", "TITLE2.DD2", "PROGPIC.DD2", "STARPIC.DD2"]
 
-    def unpack(self, input_path: Path, output_dir: Path) -> Manifest:
+    def unpack(self, input_path: Path, translatable_dir: Path, meta_dir: Path) -> Manifest:
         raw = input_path.read_bytes()
         decompressed, tree = decompress(raw)
 
@@ -48,10 +48,10 @@ class PicHandler(FormatHandler):
         img = pixels_to_image(pixels, width, height)
 
         image_name = input_path.stem.lower() + ".png"
-        img.save(output_dir / image_name)
+        img.save(translatable_dir / image_name)
 
         tree_name = input_path.stem.lower() + ".tree"
-        (output_dir / tree_name).write_bytes(tree)
+        (meta_dir / tree_name).write_bytes(tree)
 
         manifest = Manifest(
             handler="PicHandler",
@@ -63,18 +63,19 @@ class PicHandler(FormatHandler):
                 "height": height,
             },
         )
-        manifest.to_json(output_dir / "manifest.json")
+        manifest.to_json(meta_dir / "manifest.json")
         return manifest
 
-    def repack(self, manifest: Manifest, input_dir: Path, output_path: Path) -> None:
+    def repack(
+        self, manifest: Manifest, translatable_dir: Path, meta_dir: Path, output_path: Path
+    ) -> None:
         meta = manifest.metadata
         width: int = meta["width"]
         height: int = meta["height"]
 
-        img_path = input_dir / meta["image"]
         from PIL import Image
 
-        img = Image.open(img_path)
+        img = Image.open(translatable_dir / meta["image"])
         pixels = image_to_pixels(img)
 
         ega_data = encode_planar(pixels, width, height)
@@ -83,7 +84,7 @@ class PicHandler(FormatHandler):
         pic_header = _PIC_SIGNATURE + struct.pack("<HH", width_bytes, height)
         decompressed = pic_header + ega_data
 
-        tree = (input_dir / meta["tree"]).read_bytes()
+        tree = (meta_dir / meta["tree"]).read_bytes()
         compressed = compress(decompressed, tree)
 
         output_path.write_bytes(compressed)

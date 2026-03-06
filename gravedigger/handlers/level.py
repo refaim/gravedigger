@@ -21,7 +21,7 @@ class LevelHandler(FormatHandler):
 
     file_patterns: ClassVar[list[str]] = [f"LEVEL{i:02d}.DD2" for i in range(1, 9)]
 
-    def unpack(self, input_path: Path, output_dir: Path) -> Manifest:
+    def unpack(self, input_path: Path, translatable_dir: Path, meta_dir: Path) -> Manifest:
         raw = input_path.read_bytes()
 
         # File format: 4-byte decompressed size + RLEW data + "MsDos" trailer
@@ -54,7 +54,7 @@ class LevelHandler(FormatHandler):
         }
         if trailing:
             data["trailing"] = trailing
-        json_path = output_dir / "level.json"
+        json_path = translatable_dir / "level.json"
         json_path.write_text(json.dumps(data, indent=2))
 
         manifest = Manifest(
@@ -62,11 +62,13 @@ class LevelHandler(FormatHandler):
             source_file=input_path.name,
             metadata={"width": width, "height": height},
         )
-        manifest.to_json(output_dir / "manifest.json")
+        manifest.to_json(meta_dir / "manifest.json")
         return manifest
 
-    def repack(self, manifest: Manifest, input_dir: Path, output_path: Path) -> None:
-        data = json.loads((input_dir / "level.json").read_text())
+    def repack(
+        self, manifest: Manifest, translatable_dir: Path, meta_dir: Path, output_path: Path
+    ) -> None:
+        data = json.loads((translatable_dir / "level.json").read_text())
 
         header = bytes(data["header"])
         tile_map = struct.pack(f"<{len(data['tile_map'])}H", *data["tile_map"])
