@@ -17,5 +17,4 @@ test:
 
 build:
 	uv run nuitka --onefile --output-dir=.cache/nuitka --output-filename=$(EXE_NAME) gravedigger/cli.py
-	mkdir -p bin
-	cp .cache/nuitka/$(EXE_NAME) bin/
+	uv run python -c "import shutil; shutil.copy('.cache/nuitka/$(EXE_NAME)', 'bin/')"

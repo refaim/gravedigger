@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from gravedigger import __version__
 from gravedigger.core.handler import Manifest
 from gravedigger.core.registry import Registry
 from gravedigger.handlers.ctlpanel import CtlPanelHandler
@@ -156,6 +157,7 @@ def main() -> None:
         prog="gravedigger",
         description="Resource unpacker/repacker for Dangerous Dave in the Haunted Mansion",
     )
+    parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     unpack_parser = subparsers.add_parser("unpack", help="Unpack game files to editable formats")

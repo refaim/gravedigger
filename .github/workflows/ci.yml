@@ -255,13 +255,16 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
 
-      - name: Get date
-        id: date
-        run: echo "date=$(date +%Y.%m.%d)" >> "$GITHUB_OUTPUT"
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: echo "version=$(grep -oP '(?<=__version__ = \")([^\"]+)' gravedigger/__init__.py)" >> "$GITHUB_OUTPUT"
 
       - name: Rename artifacts
         env:
-          VERSION: ${{ steps.date.outputs.date }}.${{ github.run_number }}
+          VERSION: ${{ steps.version.outputs.version }}.${{ github.run_number }}
         run: |
           mv gravedigger-windows-x86_64/gravedigger-windows-x86_64.zip gravedigger-${VERSION}-windows-x86_64.zip
           mv gravedigger-linux-x86_64/gravedigger-linux-x86_64.tar.gz gravedigger-${VERSION}-linux-x86_64.tar.gz
@@ -271,10 +274,10 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.date.outputs.date }}.${{ github.run_number }}
-          name: ${{ steps.date.outputs.date }}.${{ github.run_number }}
+          tag_name: v${{ steps.version.outputs.version }}.${{ github.run_number }}
+          name: v${{ steps.version.outputs.version }}.${{ github.run_number }}
           files: |
-            gravedigger-${{ steps.date.outputs.date }}.${{ github.run_number }}-windows-x86_64.zip
-            gravedigger-${{ steps.date.outputs.date }}.${{ github.run_number }}-linux-x86_64.tar.gz
-            gravedigger-${{ steps.date.outputs.date }}.${{ github.run_number }}-macos-arm64.tar.gz
-            gravedigger-${{ steps.date.outputs.date }}.${{ github.run_number }}-macos-x86_64.tar.gz
+            gravedigger-${{ steps.version.outputs.version }}.${{ github.run_number }}-windows-x86_64.zip
+            gravedigger-${{ steps.version.outputs.version }}.${{ github.run_number }}-linux-x86_64.tar.gz
+            gravedigger-${{ steps.version.outputs.version }}.${{ github.run_number }}-macos-arm64.tar.gz
+            gravedigger-${{ steps.version.outputs.version }}.${{ github.run_number }}-macos-x86_64.tar.gz

@@ -1,18 +1,6 @@
-# Python-generated files
 __pycache__/
-*.py[oc]
-*.egg-info
-
-# Virtual environments
-.venv
-
-# Caches and build artifacts
 .cache/
-bin/
-
-# Game files (not part of the project)
-game/
-reference/
-
-# Claude
 .claude/
+.venv
+*.py[oc]
+game/
