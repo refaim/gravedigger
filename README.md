@@ -39,6 +39,8 @@ make build   # standalone binary via nuitka
 - [gamecompjs](https://github.com/camoto-project/gamecompjs) by Adam Nielsen — PKLITE decompression algorithm reference
 - [OpenTESArena ExeUnpacker](https://github.com/afritz1/OpenTESArena) by afritz1 — PKLITE decompression reference
 - [depklite](https://github.com/hackerb9/depklite) by hackerb9 / NY00123 — PKLITE decompression reference
+- [UNLZEXE](https://github.com/mywave82/unlzexe) by Mitugu Kurizono / Stian Skjelstad — LZEXE decompression algorithm reference
+- [unpacklzexe](https://github.com/samrussell/unpacklzexe) by Sam Russell — LZEXE decompression reference (Python)
 
 ## License
 

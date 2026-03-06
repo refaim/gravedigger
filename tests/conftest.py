@@ -2,13 +2,17 @@ from pathlib import Path
 
 import pytest
 
+_GAME_ROOT = Path(__file__).resolve().parent.parent / "game"
+_VARIANTS = ["softdisk", "retail"]
 
-@pytest.fixture()
-def game_dir() -> Path:
-    path = Path(__file__).resolve().parent.parent / "game"
-    if not path.is_dir():
-        pytest.skip("game/ directory not found")
-    return path
+
+def _available_variants() -> list[str]:
+    return [v for v in _VARIANTS if (_GAME_ROOT / v).is_dir()]
+
+
+@pytest.fixture(params=_available_variants())
+def game_dir(request: pytest.FixtureRequest) -> Path:
+    return _GAME_ROOT / str(request.param)
 
 
 @pytest.fixture()

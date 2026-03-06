@@ -38,9 +38,10 @@ class TestCtlPanelHandler:
         data = json.loads(json_path.read_text())
         assert len(data["keys"]) == 10
         assert all(isinstance(v, int) for v in data["keys"])
-        assert data["keys"] == [0x48, 0x49, 0x4D, 0x51, 0x50, 0x4F, 0x4B, 0x47, 0x39, 0x38]
         assert isinstance(data["extra"], int)
-        assert data["extra"] == 0x0003D7FC
+        if game_dir.name == "softdisk":
+            assert data["keys"] == [0x48, 0x49, 0x4D, 0x51, 0x50, 0x4F, 0x4B, 0x47, 0x39, 0x38]
+            assert data["extra"] == 0x0003D7FC
 
     def test_repack_byte_exact(
         self,

@@ -13,11 +13,16 @@ from gravedigger.core.handler import Manifest
 
 
 def _handled_dd2_files() -> list[str]:
-    game = Path(__file__).resolve().parent.parent / "game"
-    if not game.is_dir():
-        return []
-    registry = _build_registry()
-    return sorted(p.name for p in game.glob("*.DD2") if registry.get_handlers(p.name))
+    game_root = Path(__file__).resolve().parent.parent / "game"
+    # Check variant subdirectories first, then flat layout for backwards compat
+    for variant in ["softdisk", "retail"]:
+        variant_dir = game_root / variant
+        if variant_dir.is_dir():
+            registry = _build_registry()
+            return sorted(
+                p.name for p in variant_dir.glob("*.DD2") if registry.get_handlers(p.name)
+            )
+    return []
 
 
 ALL_DD2 = _handled_dd2_files()

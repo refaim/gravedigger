@@ -7,12 +7,22 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
-from gravedigger.compression.pklite import decompress
 from gravedigger.core.handler import Manifest
-from gravedigger.handlers.exe_text import ExeTextHandler
+from gravedigger.handlers.exe_text import ExeTextHandler, _decompress_exe
 
-GAME_DIR = Path(__file__).resolve().parent.parent / "game"
-EXE_PATH = GAME_DIR / "1.EXE"
+_GAME_ROOT = Path(__file__).resolve().parent.parent / "game"
+_EXE_VARIANTS = [
+    ("softdisk", "1.EXE"),
+    ("retail", "MANSION.EXE"),
+]
+
+
+def _available_exe_paths() -> list[Path]:
+    return [
+        _GAME_ROOT / variant / name
+        for variant, name in _EXE_VARIANTS
+        if (_GAME_ROOT / variant / name).exists()
+    ]
 
 
 @pytest.fixture()
@@ -20,11 +30,10 @@ def handler() -> ExeTextHandler:
     return ExeTextHandler()
 
 
-@pytest.fixture()
-def exe_path() -> Path:
-    if not EXE_PATH.exists():
-        pytest.skip("game/1.EXE not found")
-    return EXE_PATH
+@pytest.fixture(params=_available_exe_paths(), ids=lambda p: p.name)
+def exe_path(request: pytest.FixtureRequest) -> Path:
+    path: Path = request.param
+    return path
 
 
 @pytest.fixture()
@@ -175,7 +184,7 @@ class TestRepack:
         import struct
 
         exe_data = exe_path.read_bytes()
-        decompressed = decompress(exe_data)
+        decompressed = _decompress_exe(exe_data)
 
         header_para = struct.unpack_from("<H", decompressed, 8)[0]
         code_start = header_para * 16
@@ -213,7 +222,7 @@ class TestRepack:
         repack_path = tmp_path / "repacked.exe"
         handler.repack(manifest, translatable, meta, repack_path)
 
-        repacked_dec = decompress(repack_path.read_bytes())
+        repacked_dec = _decompress_exe(repack_path.read_bytes())
         assert b"Xoftdisk" in repacked_dec
         assert b"Softdisk" not in repacked_dec
 
@@ -231,8 +240,8 @@ class TestRepack:
         repack_path = tmp_path / "repacked.exe"
         handler.repack(manifest, translatable, meta, repack_path)
 
-        original_dec = decompress(exe_path.read_bytes())
-        repacked_dec = decompress(repack_path.read_bytes())
+        original_dec = _decompress_exe(exe_path.read_bytes())
+        repacked_dec = _decompress_exe(repack_path.read_bytes())
 
         header_para = struct.unpack_from("<H", original_dec, 8)[0]
         code_start = header_para * 16
@@ -249,3 +258,4 @@ class TestFilePatterns:
     def test_file_patterns(self, handler: ExeTextHandler) -> None:
         assert "DAVE.EXE" in handler.file_patterns
         assert "1.EXE" in handler.file_patterns
+        assert "MANSION.EXE" in handler.file_patterns

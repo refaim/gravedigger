@@ -1,8 +1,9 @@
 """ExeTextHandler — text strings from EXE.
 
 Extracts and patches NUL-terminated ASCII text strings embedded in the
-decompressed PKLITE EXE. Strings are identified by their code image offsets,
-which are hardcoded based on analysis of the Dangerous Dave executable.
+decompressed EXE (PKLITE or LZEXE compressed). Strings are identified by
+their code image offsets, which are hardcoded based on analysis of the
+Dangerous Dave executable. The code image is identical across known variants.
 
 The string table covers: UI text, menus, prompts, game messages, win/lose
 screens, copyright, configuration text, and error messages.
@@ -16,7 +17,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from openpyxl import Workbook, load_workbook
 
-from gravedigger.compression.pklite import compress, decompress
+from gravedigger.compression import lzexe, pklite
 from gravedigger.core.handler import FormatHandler, Manifest
 
 if TYPE_CHECKING:
@@ -129,6 +130,26 @@ _STRING_TABLE: list[tuple[int, str]] = [
 ]
 
 
+_LZEXE_SIG = b"LZ91"
+_PKLITE_SIG = b"PKLITE"
+
+
+def _is_lzexe(data: bytes) -> bool:
+    return len(data) >= 0x20 and data[0x1C:0x20] == _LZEXE_SIG
+
+
+def _decompress_exe(data: bytes) -> bytes:
+    if _is_lzexe(data):
+        return lzexe.decompress(data)
+    return pklite.decompress(data)
+
+
+def _compress_exe(decompressed: bytes, original: bytes) -> bytes:
+    if _is_lzexe(original):
+        return lzexe.compress(decompressed, original)
+    return pklite.compress(decompressed, original)
+
+
 def _read_nul_string(data: bytes, offset: int) -> str:
     """Read a NUL-terminated ASCII string from data at offset."""
     end = data.index(0, offset)
@@ -138,11 +159,11 @@ def _read_nul_string(data: bytes, offset: int) -> str:
 class ExeTextHandler(FormatHandler):
     """Handler for text strings embedded in the game EXE."""
 
-    file_patterns: ClassVar[list[str]] = ["DAVE.EXE", "1.EXE"]
+    file_patterns: ClassVar[list[str]] = ["DAVE.EXE", "1.EXE", "MANSION.EXE"]
 
     def unpack(self, input_path: Path, translatable_dir: Path, meta_dir: Path) -> Manifest:
         exe_data = input_path.read_bytes()
-        decompressed = decompress(exe_data)
+        decompressed = _decompress_exe(exe_data)
 
         header_para = struct.unpack_from("<H", decompressed, 8)[0]
         code_start = header_para * 16
@@ -189,7 +210,7 @@ class ExeTextHandler(FormatHandler):
     ) -> None:
         meta = manifest.metadata
         original_exe = base64.b64decode(meta["original_exe"])
-        decompressed = bytearray(decompress(original_exe))
+        decompressed = bytearray(_decompress_exe(original_exe))
 
         header_para = struct.unpack_from("<H", decompressed, 8)[0]
         code_start = header_para * 16
@@ -231,5 +252,5 @@ class ExeTextHandler(FormatHandler):
                 pad_len + 1
             )
 
-        result = compress(bytes(decompressed), original_exe)
+        result = _compress_exe(bytes(decompressed), original_exe)
         output_path.write_bytes(result)

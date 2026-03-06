@@ -9,12 +9,14 @@ import pytest
 
 from gravedigger.compression.pklite import _bt_read, compress, decompress
 
-GAME_DIR = Path(__file__).resolve().parent.parent / "game"
+GAME_DIR = Path(__file__).resolve().parent.parent / "game" / "softdisk"
 EXE_PATH = GAME_DIR / "1.EXE"
 
 
 @pytest.fixture
 def exe_data() -> bytes:
+    if not EXE_PATH.exists():
+        pytest.skip("game/softdisk/1.EXE not found")
     return EXE_PATH.read_bytes()
 
 
