@@ -9,6 +9,7 @@ description = "Resource unpacker/repacker for Dangerous Dave in the Haunted Mans
 license = "GPL-3.0-or-later"
 requires-python = ">=3.13"
 dependencies = [
+    "openpyxl>=3.1.5",
     "pillow>=12.1.1",
 ]
 
@@ -23,6 +24,7 @@ dev = [
     "mypy>=1.14",
     "nuitka>=2.5",
     "zstandard>=0.25.0",
+    "types-openpyxl>=3.1.5.20250919",
 ]
 
 [tool.pytest.ini_options]
@@ -46,6 +48,9 @@ strict = true
 python_version = "3.13"
 cache_dir = ".cache/mypy"
 exclude = ['\.cache/', 'reference/']
+
+[tool.uv]
+package = false
 
 [tool.hatch.version]
 path = "gravedigger/__init__.py"

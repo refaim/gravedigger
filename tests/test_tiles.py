@@ -20,9 +20,7 @@ class TestTileHandlerUnpack:
             png = tiles_dir / f"tile_{i:04d}.png"
             assert png.exists(), f"Missing {png.name}"
 
-    def test_tile_dimensions(
-        self, game_dir: Path, tmp_translatable: Path, tmp_meta: Path
-    ) -> None:
+    def test_tile_dimensions(self, game_dir: Path, tmp_translatable: Path, tmp_meta: Path) -> None:
         handler = TileHandler()
         handler.unpack(game_dir / "EGATILES.DD2", tmp_translatable, tmp_meta)
         tiles_dir = tmp_translatable / "tiles"

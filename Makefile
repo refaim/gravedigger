@@ -10,6 +10,7 @@ EXE_NAME := gravedigger$(EXE_EXT)
 
 lint:
 	uv run ruff check .
+	uv run ruff format --check .
 	uv run mypy .
 
 test:

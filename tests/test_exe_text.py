@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
+from openpyxl import load_workbook
 
 from gravedigger.compression.pklite import decompress
 from gravedigger.core.handler import Manifest
@@ -37,70 +37,97 @@ def unpacked_dirs(handler: ExeTextHandler, exe_path: Path, tmp_path: Path) -> tu
     return translatable, meta
 
 
+def _read_xlsx(path: Path) -> dict[str, str]:
+    """Read strings.xlsx into {id: text} dict."""
+    wb = load_workbook(path)
+    ws = wb.active
+    assert ws is not None
+    result: dict[str, str] = {}
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        str_id, text = row[0], row[1]
+        result[str(str_id)] = str(text) if text is not None else ""
+    return result
+
+
+def _write_xlsx(path: Path, strings: dict[str, str]) -> None:
+    """Write {id: text} dict back to strings.xlsx."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "strings"
+    ws.append(["id", "text"])
+    for str_id, text in strings.items():
+        ws.append([str_id, text])
+    wb.save(path)
+
+
 class TestUnpack:
-    def test_produces_json(self, unpacked_dirs: tuple[Path, Path]) -> None:
+    def test_produces_xlsx(self, unpacked_dirs: tuple[Path, Path]) -> None:
         translatable, _ = unpacked_dirs
-        assert (translatable / "strings.json").exists()
+        assert (translatable / "strings.xlsx").exists()
 
     def test_produces_manifest(self, unpacked_dirs: tuple[Path, Path]) -> None:
         _, meta = unpacked_dirs
         manifest = Manifest.from_json(meta / "manifest.json")
         assert manifest.handler == "ExeTextHandler"
 
-    def test_json_contains_dangerous_dave(self, unpacked_dirs: tuple[Path, Path]) -> None:
+    def test_xlsx_contains_dangerous_dave(self, unpacked_dirs: tuple[Path, Path]) -> None:
         translatable, _ = unpacked_dirs
-        data = json.loads((translatable / "strings.json").read_text())
-        texts = [entry["text"] for entry in data["strings"]]
-        assert any("Dangerous Dave Commands" in t for t in texts)
+        strings = _read_xlsx(translatable / "strings.xlsx")
+        assert any("Dangerous Dave Commands" in t for t in strings.values())
 
-    def test_json_contains_game_over(self, unpacked_dirs: tuple[Path, Path]) -> None:
+    def test_xlsx_contains_game_over(self, unpacked_dirs: tuple[Path, Path]) -> None:
         translatable, _ = unpacked_dirs
-        data = json.loads((translatable / "strings.json").read_text())
-        texts = [entry["text"] for entry in data["strings"]]
-        assert any("G A M E   O V E R" in t for t in texts)
+        strings = _read_xlsx(translatable / "strings.xlsx")
+        assert any("G A M E   O V E R" in t for t in strings.values())
 
-    def test_json_contains_copyright(self, unpacked_dirs: tuple[Path, Path]) -> None:
+    def test_xlsx_contains_copyright(self, unpacked_dirs: tuple[Path, Path]) -> None:
         translatable, _ = unpacked_dirs
-        data = json.loads((translatable / "strings.json").read_text())
-        texts = [entry["text"] for entry in data["strings"]]
-        assert any("Softdisk" in t for t in texts)
+        strings = _read_xlsx(translatable / "strings.xlsx")
+        assert any("Softdisk" in t for t in strings.values())
 
-    def test_json_contains_level_names(self, unpacked_dirs: tuple[Path, Path]) -> None:
+    def test_xlsx_contains_level_names(self, unpacked_dirs: tuple[Path, Path]) -> None:
         translatable, _ = unpacked_dirs
-        data = json.loads((translatable / "strings.json").read_text())
-        texts = [entry["text"] for entry in data["strings"]]
-        assert any("LEVEL 1" in t for t in texts)
-        assert any("LEVEL 8" in t for t in texts)
+        strings = _read_xlsx(translatable / "strings.xlsx")
+        assert any("LEVEL 1" in t for t in strings.values())
+        assert any("LEVEL 8" in t for t in strings.values())
 
-    def test_json_contains_congratulations(self, unpacked_dirs: tuple[Path, Path]) -> None:
+    def test_xlsx_contains_congratulations(self, unpacked_dirs: tuple[Path, Path]) -> None:
         translatable, _ = unpacked_dirs
-        data = json.loads((translatable / "strings.json").read_text())
-        texts = [entry["text"] for entry in data["strings"]]
-        assert any("You have freed Delbert" in t for t in texts)
+        strings = _read_xlsx(translatable / "strings.xlsx")
+        assert any("You have freed Delbert" in t for t in strings.values())
 
-    def test_json_entries_have_offset_and_max_length(
-        self, unpacked_dirs: tuple[Path, Path]
-    ) -> None:
+    def test_xlsx_has_header_row(self, unpacked_dirs: tuple[Path, Path]) -> None:
         translatable, _ = unpacked_dirs
-        data = json.loads((translatable / "strings.json").read_text())
-        for entry in data["strings"]:
-            assert "offset" in entry
-            assert "text" in entry
-            assert "max_length" in entry
-            assert isinstance(entry["offset"], int)
-            assert isinstance(entry["text"], str)
-            assert isinstance(entry["max_length"], int)
-            assert len(entry["text"].encode("ascii")) <= entry["max_length"]
+        wb = load_workbook(translatable / "strings.xlsx")
+        ws = wb.active
+        assert ws is not None
+        assert ws.cell(1, 1).value == "id"
+        assert ws.cell(1, 2).value == "text"
 
-    def test_json_string_count(self, unpacked_dirs: tuple[Path, Path]) -> None:
+    def test_xlsx_string_count(self, unpacked_dirs: tuple[Path, Path]) -> None:
         translatable, _ = unpacked_dirs
-        data = json.loads((translatable / "strings.json").read_text())
-        assert len(data["strings"]) >= 50
+        strings = _read_xlsx(translatable / "strings.xlsx")
+        assert len(strings) >= 50
 
     def test_manifest_has_original_exe(self, unpacked_dirs: tuple[Path, Path]) -> None:
         _, meta = unpacked_dirs
         manifest = Manifest.from_json(meta / "manifest.json")
         assert "original_exe" in manifest.metadata
+
+    def test_manifest_has_strings_meta(self, unpacked_dirs: tuple[Path, Path]) -> None:
+        _, meta = unpacked_dirs
+        manifest = Manifest.from_json(meta / "manifest.json")
+        strings_meta = manifest.metadata["strings"]
+        assert len(strings_meta) >= 50
+        for entry in strings_meta:
+            assert "id" in entry
+            assert "offset" in entry
+            assert "max_length" in entry
+            assert isinstance(entry["offset"], int)
+            assert isinstance(entry["max_length"], int)
 
 
 class TestRepack:
@@ -127,15 +154,16 @@ class TestRepack:
         meta.mkdir()
         manifest = handler.unpack(exe_path, translatable, meta)
 
-        strings_path = translatable / "strings.json"
-        data = json.loads(strings_path.read_text())
+        xlsx_path = translatable / "strings.xlsx"
+        strings = _read_xlsx(xlsx_path)
 
-        for entry in data["strings"]:
-            if entry["text"] == "You win!":
-                entry["text"] = "A" * (entry["max_length"] + 10)
+        # Find win_line13 ("You win!") and make it too long
+        for str_id in strings:
+            if strings[str_id] == "You win!":
+                strings[str_id] = "A" * 100
                 break
 
-        strings_path.write_text(json.dumps(data, indent=2))
+        _write_xlsx(xlsx_path, strings)
 
         repack_path = tmp_path / "repacked.exe"
         with pytest.raises(ValueError, match="exceeds maximum length"):
@@ -177,15 +205,10 @@ class TestRepack:
         meta.mkdir()
         manifest = handler.unpack(exe_path, translatable, meta)
 
-        strings_path = translatable / "strings.json"
-        data = json.loads(strings_path.read_text())
-
-        for entry in data["strings"]:
-            if entry["id"] == "copyright":
-                entry["text"] = entry["text"].replace("Softdisk", "Xoftdisk")
-                break
-
-        strings_path.write_text(json.dumps(data, indent=2))
+        xlsx_path = translatable / "strings.xlsx"
+        strings = _read_xlsx(xlsx_path)
+        strings["copyright"] = strings["copyright"].replace("Softdisk", "Xoftdisk")
+        _write_xlsx(xlsx_path, strings)
 
         repack_path = tmp_path / "repacked.exe"
         handler.repack(manifest, translatable, meta, repack_path)

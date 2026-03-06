@@ -11,9 +11,10 @@ screens, copyright, configuration text, and error messages.
 from __future__ import annotations
 
 import base64
-import json
 import struct
 from typing import TYPE_CHECKING, Any, ClassVar
+
+from openpyxl import Workbook, load_workbook
 
 from gravedigger.compression.pklite import compress, decompress
 from gravedigger.core.handler import FormatHandler, Manifest
@@ -146,26 +147,24 @@ class ExeTextHandler(FormatHandler):
         header_para = struct.unpack_from("<H", decompressed, 8)[0]
         code_start = header_para * 16
 
-        strings: list[dict[str, Any]] = []
+        strings_meta: list[dict[str, Any]] = []
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "strings"
+        ws.append(["id", "text"])
+
         for code_offset, name in _STRING_TABLE:
             abs_offset = code_start + code_offset
             text = _read_nul_string(decompressed, abs_offset)
-            strings.append(
-                {
-                    "id": name,
-                    "offset": code_offset,
-                    "text": text,
-                    "max_length": len(text),
-                }
-            )
+            ws.append([name, text])
+            strings_meta.append({"id": name, "offset": code_offset, "max_length": len(text)})
 
-        strings_data = {"strings": strings}
-        (translatable_dir / "strings.json").write_text(
-            json.dumps(strings_data, indent=2, ensure_ascii=False)
-        )
+        wb.save(translatable_dir / "strings.xlsx")
 
         metadata: dict[str, Any] = {
             "original_exe": base64.b64encode(exe_data).decode(),
+            "strings": strings_meta,
         }
 
         manifest = Manifest(
@@ -186,17 +185,27 @@ class ExeTextHandler(FormatHandler):
         header_para = struct.unpack_from("<H", decompressed, 8)[0]
         code_start = header_para * 16
 
-        strings_data = json.loads((translatable_dir / "strings.json").read_text())
+        # Build lookup from XLSX: id -> text
+        wb = load_workbook(translatable_dir / "strings.xlsx")
+        ws = wb.active
+        assert ws is not None
+        text_by_id: dict[str, str] = {}
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            rid, text = row[0], row[1]
+            text_by_id[str(rid)] = str(text) if text is not None else ""
 
-        for entry in strings_data["strings"]:
+        strings_meta: list[dict[str, Any]] = meta["strings"]
+
+        for entry in strings_meta:
+            str_id: str = entry["id"]
             code_offset: int = entry["offset"]
-            new_text: str = entry["text"]
             max_length: int = entry["max_length"]
+            new_text = text_by_id[str_id]
 
             encoded = new_text.encode("ascii")
             if len(encoded) > max_length:
                 msg = (
-                    f"String {entry['id']!r} ({len(encoded)} bytes) "
+                    f"String {str_id!r} ({len(encoded)} bytes) "
                     f"exceeds maximum length ({max_length} bytes)"
                 )
                 raise ValueError(msg)

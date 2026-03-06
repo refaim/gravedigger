@@ -17,9 +17,7 @@ def _handled_dd2_files() -> list[str]:
     if not game.is_dir():
         return []
     registry = _build_registry()
-    return sorted(
-        p.name for p in game.glob("*.DD2") if registry.get_handlers(p.name)
-    )
+    return sorted(p.name for p in game.glob("*.DD2") if registry.get_handlers(p.name))
 
 
 ALL_DD2 = _handled_dd2_files()
@@ -118,9 +116,7 @@ class TestCLIFullCycle:
                 f"CLI EXE roundtrip byte mismatch: {original.name}"
             )
 
-    def test_unpack_creates_translatable_and_meta(
-        self, game_dir: Path, tmp_path: Path
-    ) -> None:
+    def test_unpack_creates_translatable_and_meta(self, game_dir: Path, tmp_path: Path) -> None:
         unpack_dir = tmp_path / "unpacked"
 
         result = _run_cli("unpack", str(game_dir), str(unpack_dir))

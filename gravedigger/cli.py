@@ -40,9 +40,7 @@ def _cmd_unpack(args: argparse.Namespace) -> None:
         print(f"Error: input directory does not exist: {game_dir}", file=sys.stderr)
         sys.exit(1)
 
-    game_files = sorted(
-        p for p in game_dir.iterdir() if p.suffix.upper() in _GAME_SUFFIXES
-    )
+    game_files = sorted(p for p in game_dir.iterdir() if p.suffix.upper() in _GAME_SUFFIXES)
     if not game_files:
         print(f"Error: no game files found in {game_dir}", file=sys.stderr)
         sys.exit(1)
