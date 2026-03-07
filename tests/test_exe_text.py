@@ -173,8 +173,9 @@ class TestRepack:
         repack_path = tmp_path / "repacked.exe"
         handler.repack(manifest, translatable, meta, repack_path)
 
-        repacked_dec = _decompress_exe(repack_path.read_bytes())
-        assert long_text.encode("ascii") in repacked_dec
+        # Output is an uncompressed EXE when relocation is needed
+        repacked = repack_path.read_bytes()
+        assert long_text.encode("ascii") in repacked
 
     def test_patching_decompressed_strings(
         self, handler: ExeTextHandler, exe_path: Path, tmp_path: Path

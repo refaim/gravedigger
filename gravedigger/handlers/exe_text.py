@@ -149,13 +149,6 @@ def _decompress_exe(data: bytes) -> bytes:
     return pklite.decompress(data)
 
 
-def _rewrite_exe(original: bytes, new_code_image: bytes) -> bytes:
-    """Re-encode the entire code image using the appropriate codec."""
-    if _is_lzexe(original):
-        return lzexe.rewrite_code(original, new_code_image)
-    return pklite.rewrite_code(original, new_code_image)
-
-
 def _compress_exe(decompressed: bytes, original: bytes) -> bytes:
     if _is_lzexe(original):
         return lzexe.compress(decompressed, original)
@@ -266,30 +259,46 @@ class ExeTextHandler(FormatHandler):
                 )
             result = _compress_exe(bytes(decompressed), original_exe)
         else:
-            # Build a new string block appended to the code image.
-            # All strings are packed contiguously (NUL-terminated).
+            # Hybrid path: patch strings that fit in-place, relocate only
+            # those that exceed their original slot.  Old string content is
+            # preserved (not zeroed) so that any unknown cross-references
+            # still find valid data.
             extra_block = bytearray()
-            # Map string id -> new DS-relative offset
+            relocated_ids: set[str] = set()
             new_offsets: dict[str, int] = {}
 
+            # First pass: identify which strings need relocation and build
+            # the appended block for them.
             for entry in strings_meta:
                 str_id = entry["id"]
                 encoded = encoded_by_id[str_id]
-                new_code_offset = code_image_size + len(extra_block)
-                new_offsets[str_id] = new_code_offset - _DS_BASE
-                extra_block.extend(encoded)
-                extra_block.append(0)  # NUL terminator
+                max_length: int = entry["max_length"]
+                if len(encoded) > max_length:
+                    # String too long — relocate to appended block
+                    new_code_offset = code_image_size + len(extra_block)
+                    new_offsets[str_id] = new_code_offset - _DS_BASE
+                    extra_block.extend(encoded)
+                    extra_block.append(0)  # NUL terminator
+                    relocated_ids.add(str_id)
 
-            # Zero out old string locations in the code image
+            # Second pass: patch all strings.
             for entry in strings_meta:
-                code_offset = entry["offset"]
+                str_id = entry["id"]
+                code_offset: int = entry["offset"]
                 max_length = entry["max_length"]
+                encoded = encoded_by_id[str_id]
                 abs_offset = code_start + code_offset
-                decompressed[abs_offset : abs_offset + max_length + 1] = b"\x00" * (max_length + 1)
+                if str_id not in relocated_ids:
+                    # Fits in place — overwrite with padding
+                    pad_len = max_length - len(encoded)
+                    decompressed[abs_offset : abs_offset + max_length + 1] = encoded + b"\x00" * (
+                        pad_len + 1
+                    )
 
-            # Patch xrefs: update the 16-bit immediate operand in each
-            # mov ax instruction to point to the new string location.
+            # Patch xrefs only for relocated strings.
             for _code_offset, name, xrefs in _STRING_TABLE:
+                if name not in relocated_ids:
+                    continue
                 new_ds_off = new_offsets[name]
                 if new_ds_off > 0xFFFF:  # pragma: no cover
                     msg = f"String {name!r} at DS offset 0x{new_ds_off:x} exceeds 16-bit range"
@@ -298,10 +307,18 @@ class ExeTextHandler(FormatHandler):
                     abs_offset = code_start + xref_offset
                     struct.pack_into("<H", decompressed, abs_offset, new_ds_off)
 
-            # Byte-patching can't handle xref changes (most operand bytes are
-            # back-references in the compressed stream), so re-encode the
-            # entire code image as literals.
-            new_code_image = bytes(decompressed[code_start:]) + bytes(extra_block)
-            result = _rewrite_exe(original_exe, new_code_image)
+            # Output the decompressed EXE with the extra string block appended.
+            # Re-encoding into the compression format is impractical because
+            # the decompressor stubs have hardcoded size values.
+            decompressed.extend(extra_block)
+            file_size = len(decompressed)
+            struct.pack_into("<HH", decompressed, 2, file_size & 0x1FF, (file_size + 0x1FF) >> 9)
+            # Fix MinAlloc/MaxAlloc: the decompressed header was only used by
+            # the PKLITE/LZEXE stub internally and may have invalid values
+            # (e.g. MinAlloc > MaxAlloc).  Set MaxAlloc=0xFFFF to request all
+            # available memory, and MinAlloc=0 since the load module already
+            # contains the full code image including the appended strings.
+            struct.pack_into("<HH", decompressed, 0x0A, 0x0000, 0xFFFF)
+            result = bytes(decompressed)
 
         output_path.write_bytes(result)
