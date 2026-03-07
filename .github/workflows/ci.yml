@@ -46,7 +46,7 @@ jobs:
 
           urlretrieve('https://kosmodan.ru/f/ddave2-retail.zip', 'ddave2-retail.zip')
           ZipFile('ddave2-retail.zip').extractall()
-          Path('ddave2-retail').rename('game/retail')
+          Path('ddave2').rename('game/retail')
           "
 
       - name: Ruff check
