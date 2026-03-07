@@ -258,3 +258,139 @@ class TestFilePatterns:
         assert "DAVE.EXE" in handler.file_patterns
         assert "1.EXE" in handler.file_patterns
         assert "MANSION.EXE" in handler.file_patterns
+
+
+_EXIT_SCREEN_OFFSET = 0x112F0
+_EXIT_SCREEN_SIZE = 4000  # 80 * 25 * 2
+_EXIT_SCREEN_WIDTH = 80
+_EXIT_SCREEN_HEIGHT = 25
+_EXIT_SCREEN_FONT_HEIGHT = 16
+
+
+class TestExitScreen:
+    """Tests for exit screen unpack/repack in ExeTextHandler."""
+
+    def test_unpack_produces_exit_screen_xb(self, unpacked_dirs: tuple[Path, Path]) -> None:
+        translatable, _ = unpacked_dirs
+        assert (translatable / "exit_screen.xb").exists()
+
+    def test_exit_screen_xb_is_valid_xbin(self, unpacked_dirs: tuple[Path, Path]) -> None:
+        from gravedigger.xbin import parse
+
+        translatable, _ = unpacked_dirs
+        data = (translatable / "exit_screen.xb").read_bytes()
+        result = parse(data)
+        assert result is not None
+
+    def test_exit_screen_dimensions(self, unpacked_dirs: tuple[Path, Path]) -> None:
+        from gravedigger.xbin import parse
+
+        translatable, _ = unpacked_dirs
+        data = (translatable / "exit_screen.xb").read_bytes()
+        result = parse(data)
+        assert result.width == _EXIT_SCREEN_WIDTH
+        assert result.height == _EXIT_SCREEN_HEIGHT
+
+    def test_exit_screen_has_font(self, unpacked_dirs: tuple[Path, Path]) -> None:
+        from gravedigger.xbin import parse
+
+        translatable, _ = unpacked_dirs
+        data = (translatable / "exit_screen.xb").read_bytes()
+        result = parse(data)
+        assert result.font is not None
+        assert result.font_height == _EXIT_SCREEN_FONT_HEIGHT
+
+    def test_exit_screen_image_data_size(self, unpacked_dirs: tuple[Path, Path]) -> None:
+        from gravedigger.xbin import parse
+
+        translatable, _ = unpacked_dirs
+        data = (translatable / "exit_screen.xb").read_bytes()
+        result = parse(data)
+        assert len(result.image_data) == _EXIT_SCREEN_SIZE
+
+    def test_exit_screen_roundtrip_byte_exact(
+        self, handler: ExeTextHandler, exe_path: Path, tmp_path: Path
+    ) -> None:
+        """Repack without modifications produces byte-exact original."""
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
+        manifest = handler.unpack(exe_path, translatable, meta)
+
+        repack_path = tmp_path / "repacked.exe"
+        handler.repack(manifest, translatable, meta, repack_path)
+
+        assert repack_path.read_bytes() == exe_path.read_bytes()
+
+    def test_exit_screen_image_data_matches_exe(
+        self, handler: ExeTextHandler, exe_path: Path, tmp_path: Path
+    ) -> None:
+        """Image data in exit_screen.xb matches raw bytes in decompressed EXE."""
+        import struct as _struct
+
+        from gravedigger.xbin import parse
+
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
+        handler.unpack(exe_path, translatable, meta)
+
+        exe_data = exe_path.read_bytes()
+        decompressed = _decompress_exe(exe_data)
+        header_para = _struct.unpack_from("<H", decompressed, 8)[0]
+        code_start = header_para * 16
+        abs_offset = code_start + _EXIT_SCREEN_OFFSET
+        raw_screen = decompressed[abs_offset : abs_offset + _EXIT_SCREEN_SIZE]
+
+        data = (translatable / "exit_screen.xb").read_bytes()
+        result = parse(data)
+        assert result.image_data == raw_screen
+
+    def test_modify_exit_screen_changes_exe(
+        self, handler: ExeTextHandler, exe_path: Path, tmp_path: Path
+    ) -> None:
+        """Modifying exit_screen.xb changes correct bytes in the repacked EXE."""
+        import struct as _struct
+
+        from gravedigger.xbin import build, parse
+
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
+        manifest = handler.unpack(exe_path, translatable, meta)
+
+        xb_path = translatable / "exit_screen.xb"
+        orig = parse(xb_path.read_bytes())
+
+        # Flip first byte of image data
+        modified_image = bytes([orig.image_data[0] ^ 0xFF]) + orig.image_data[1:]
+        new_xb = build(
+            orig.width,
+            orig.height,
+            modified_image,
+            font=orig.font,
+            font_height=orig.font_height,
+        )
+        xb_path.write_bytes(new_xb)
+
+        repack_path = tmp_path / "repacked.exe"
+        handler.repack(manifest, translatable, meta, repack_path)
+
+        # When exit screen is modified the output is a decompressed EXE; try to
+        # decompress but fall back to reading raw if already decompressed.
+        repacked_raw = repack_path.read_bytes()
+        try:
+            repacked_dec = bytearray(_decompress_exe(repacked_raw))
+        except ValueError:
+            repacked_dec = bytearray(repacked_raw)
+
+        orig_dec = bytearray(_decompress_exe(exe_path.read_bytes()))
+        header_para = _struct.unpack_from("<H", bytes(orig_dec), 8)[0]
+        code_start = header_para * 16
+        abs_offset = code_start + _EXIT_SCREEN_OFFSET
+
+        assert repacked_dec[abs_offset] == orig.image_data[0] ^ 0xFF
+        assert repacked_dec[abs_offset + 1 : abs_offset + _EXIT_SCREEN_SIZE] == orig.image_data[1:]

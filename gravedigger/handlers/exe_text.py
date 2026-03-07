@@ -19,6 +19,9 @@ from openpyxl import Workbook, load_workbook
 
 from gravedigger.compression import lzexe, pklite
 from gravedigger.core.handler import FormatHandler, Manifest
+from gravedigger.data import load_cp866_font
+from gravedigger.xbin import build as xbin_build
+from gravedigger.xbin import parse as xbin_parse
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,6 +33,12 @@ if TYPE_CHECKING:
 # instructions that reference this string via its DS-relative offset.
 # DS base segment = 0x2711 (linear 0x27110).
 _DS_BASE = 0x27110
+
+_EXIT_SCREEN_OFFSET = 0x112F0  # code offset of exit screen in decompressed EXE
+_EXIT_SCREEN_WIDTH = 80
+_EXIT_SCREEN_HEIGHT = 25
+_EXIT_SCREEN_FONT_HEIGHT = 16
+_EXIT_SCREEN_SIZE = _EXIT_SCREEN_WIDTH * _EXIT_SCREEN_HEIGHT * 2  # 4000
 
 _STRING_TABLE: list[tuple[int, str, list[int]]] = [
     # Help / commands screen
@@ -197,6 +206,19 @@ class ExeTextHandler(FormatHandler):
 
         wb.save(translatable_dir / "strings.xlsx")
 
+        # Extract exit screen (80x25 VGA text-mode B800 data) as XBIN
+        exit_abs = code_start + _EXIT_SCREEN_OFFSET
+        image_data = decompressed[exit_abs : exit_abs + _EXIT_SCREEN_SIZE]
+        font = load_cp866_font()
+        xbin_bytes = xbin_build(
+            _EXIT_SCREEN_WIDTH,
+            _EXIT_SCREEN_HEIGHT,
+            image_data,
+            font=font,
+            font_height=_EXIT_SCREEN_FONT_HEIGHT,
+        )
+        (translatable_dir / "exit_screen.xb").write_bytes(xbin_bytes)
+
         metadata: dict[str, Any] = {
             "original_exe": base64.b64encode(exe_data).decode(),
             "strings": strings_meta,
@@ -245,6 +267,19 @@ class ExeTextHandler(FormatHandler):
         # Check if any string exceeds its original slot
         needs_relocation = any(len(encoded_by_id[e["id"]]) > e["max_length"] for e in strings_meta)
 
+        # Patch exit screen from exit_screen.xb
+        xb_path = translatable_dir / "exit_screen.xb"
+        xb = xbin_parse(xb_path.read_bytes())
+        exit_abs = code_start + _EXIT_SCREEN_OFFSET
+        original_screen = bytes(decompressed[exit_abs : exit_abs + _EXIT_SCREEN_SIZE])
+        exit_screen_changed = xb.image_data != original_screen
+        decompressed[exit_abs : exit_abs + _EXIT_SCREEN_SIZE] = xb.image_data
+
+        # If exit screen data changed, we cannot re-compress (compressor back-references
+        # may reference the modified region). Use the decompressed-EXE output path instead.
+        if exit_screen_changed:
+            needs_relocation = True
+
         if not needs_relocation:
             # All strings fit in-place — use the simple path
             for entry in strings_meta:
@@ -272,7 +307,7 @@ class ExeTextHandler(FormatHandler):
             for entry in strings_meta:
                 str_id = entry["id"]
                 encoded = encoded_by_id[str_id]
-                max_length: int = entry["max_length"]
+                max_length = entry["max_length"]
                 if len(encoded) > max_length:
                     # String too long — relocate to appended block
                     new_code_offset = code_image_size + len(extra_block)
@@ -284,7 +319,7 @@ class ExeTextHandler(FormatHandler):
             # Second pass: patch all strings.
             for entry in strings_meta:
                 str_id = entry["id"]
-                code_offset: int = entry["offset"]
+                code_offset = entry["offset"]
                 max_length = entry["max_length"]
                 encoded = encoded_by_id[str_id]
                 abs_offset = code_start + code_offset

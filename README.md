@@ -13,7 +13,14 @@ gravedigger unpack <game_dir> <output_dir>
 gravedigger repack <output_dir> <repacked_dir>
 ```
 
-`unpack` reads original game files (`.DD2`, `.EXE`) and produces editable assets: text strings as XLSX, graphics as PNG.
+`unpack` reads original game files (`.DD2`, `.EXE`) and produces editable assets:
+
+| Resource | Format | Notes |
+|---|---|---|
+| Text strings (menus, messages, win/lose screens) | XLSX | One row per string; translated text can exceed the original length |
+| Sprites and tiles | PNG | Indexed-color images with original palette |
+| Anti-piracy exit screen (80×25 VGA text mode) | [XBIN](https://web.archive.org/web/20120204063040/http://www.acid.org/info/xbin/x_spec.htm) | Can be edited in [Moebius](https://github.com/blocktronics/moebius), a free ANSI/XBIN art editor |
+
 `repack` takes the edited translations and rebuilds game files ready to play.
 
 ## Installation

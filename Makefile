@@ -17,5 +17,5 @@ test:
 	uv run pytest --cov=gravedigger --cov-branch --cov-report=term-missing --cov-fail-under=100
 
 build:
-	uv run nuitka --onefile --output-dir=.cache/nuitka --output-filename=$(EXE_NAME) gravedigger/cli.py
+	uv run nuitka --onefile --include-package-data=gravedigger --output-dir=.cache/nuitka --output-filename=$(EXE_NAME) gravedigger/cli.py
 	uv run python -c "import shutil; shutil.copy('.cache/nuitka/$(EXE_NAME)', 'bin/')"
