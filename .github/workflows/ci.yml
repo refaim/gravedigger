@@ -110,7 +110,7 @@ jobs:
         run: choco install ccache
 
       - name: Build
-        run: uv run nuitka --onefile --prefer-source-code --mingw64 --assume-yes-for-downloads --show-scons --output-dir=build --output-filename=gravedigger.exe gravedigger/cli.py
+        run: uv run nuitka --onefile --prefer-source-code --assume-yes-for-downloads --show-scons --output-dir=build --output-filename=gravedigger.exe gravedigger/cli.py
 
       - name: Package
         run: Compress-Archive -Path build\gravedigger.exe -DestinationPath gravedigger-windows-x86_64.zip
