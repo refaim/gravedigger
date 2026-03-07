@@ -106,18 +106,14 @@ class TestCompress:
         assert result == exe_data
 
     def test_modified_backreference_raises(self, exe_data: bytes) -> None:
+        """Modifying a byte produced by a back-reference should raise."""
         decompressed = bytearray(decompress(exe_data))
         header_para = struct.unpack_from("<H", decompressed, 8)[0]
         code_start = header_para * 16
-        decompressed[code_start] ^= 0xFF
-        decompressed[code_start + 1] ^= 0xFF
-        decompressed[code_start + 2] ^= 0xFF
-        try:
-            recompressed = compress(bytes(decompressed), exe_data)
-            re_dec = decompress(recompressed)
-            assert re_dec[code_start] == decompressed[code_start]
-        except ValueError:
-            pass
+        # Code offset 32 is a back-reference copy in MANSION.EXE
+        decompressed[code_start + 32] ^= 0xFF
+        with pytest.raises(ValueError, match="back-reference"):
+            compress(bytes(decompressed), exe_data)
 
 
 class TestValidation:
@@ -148,3 +144,9 @@ class TestDecompressReloc:
         data = bytes([0])  # span=0, pos=1, pos+1 >= len → break
         relocs = _decompress_reloc(data)
         assert relocs == []
+
+    def test_data_ends_without_terminator(self) -> None:
+        """Data exhausted without marker=1 terminator → while loop ends."""
+        data = bytes([5, 3])
+        relocs = _decompress_reloc(data)
+        assert len(relocs) == 2

@@ -281,8 +281,6 @@ def _patch_compressed(
     out = bytearray(original)
 
     for code_offset, literal_pos in ops:
-        if code_offset >= len(new_code):
-            break
         if orig_code[code_offset] == new_code[code_offset]:
             continue
         if literal_pos is not None:
