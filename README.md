@@ -4,6 +4,8 @@ Translation toolkit for **Dangerous Dave in the Haunted Mansion** (DOS, 1991).
 
 Extracts translatable resources (text strings) from the game into editable formats and repacks them back into working game files, enabling fan translations into any language.
 
+Supports arbitrary-length replacement strings — translated text is not limited to the original string length. When a string exceeds its original slot, all strings are relocated to an appended block with patched cross-references.
+
 ## Usage
 
 ```

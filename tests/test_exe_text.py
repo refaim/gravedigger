@@ -154,9 +154,10 @@ class TestRepack:
 
         assert repack_path.read_bytes() == exe_path.read_bytes()
 
-    def test_string_too_long_raises(
+    def test_string_longer_than_original_relocates(
         self, handler: ExeTextHandler, exe_path: Path, tmp_path: Path
     ) -> None:
+        """Strings longer than original slot are relocated to an appended block."""
         translatable = tmp_path / "translatable"
         meta = tmp_path / "meta"
         translatable.mkdir()
@@ -165,18 +166,15 @@ class TestRepack:
 
         xlsx_path = translatable / "strings.xlsx"
         strings = _read_xlsx(xlsx_path)
-
-        # Find win_line13 ("You win!") and make it too long
-        for str_id in strings:
-            if strings[str_id] == "You win!":
-                strings[str_id] = "A" * 100
-                break
-
+        long_text = "A very long replacement string that exceeds the original"
+        strings["win_line13"] = long_text
         _write_xlsx(xlsx_path, strings)
 
         repack_path = tmp_path / "repacked.exe"
-        with pytest.raises(ValueError, match="exceeds maximum length"):
-            handler.repack(manifest, translatable, meta, repack_path)
+        handler.repack(manifest, translatable, meta, repack_path)
+
+        repacked_dec = _decompress_exe(repack_path.read_bytes())
+        assert long_text.encode("ascii") in repacked_dec
 
     def test_patching_decompressed_strings(
         self, handler: ExeTextHandler, exe_path: Path, tmp_path: Path

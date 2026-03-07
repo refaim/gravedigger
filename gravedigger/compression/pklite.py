@@ -423,6 +423,148 @@ def compress(data: bytes, original: bytes) -> bytes:
     return _patch_compressed(original, params, orig_code, new_code)
 
 
+# Huffman code bits for the -1 (special marker) node in _BT_COUNT_LARGE.
+# Walking the tree: 0 -> left, then 1,1,1 -> right x3, then 0 -> left = -1.
+_HUFFMAN_MINUS_ONE = (0, 1, 1, 1, 0)
+
+
+def _encode_tail(bit_index_start: int, cache_word: int, extra_code: bytes) -> tuple[int, bytes]:
+    """Encode extra literal bytes + end marker into a PKLITE bit/byte stream.
+
+    The bit stream and byte stream share one position counter.  When the
+    bit-cache word fills up (16 bits), the decompressor refills by reading
+    2 bytes from the stream *before* reading any literal data byte.  This
+    function carefully interleaves word-refill bytes and literal bytes so
+    that the decompressor reads them in the correct order.
+
+    Returns (patched_first_word, stream_bytes).
+    """
+    # Build the schedule: each entry is (bit_value, raw_byte | None).
+    # A "raw_byte" is read by get_byte() right after the bit is consumed.
+    schedule: list[tuple[int, int | None]] = [(0, b) for b in extra_code]
+    # End marker: mode-bit 1, Huffman bits for -1, then 0xFF byte.
+    # The 0xFF is read by get_byte() after the last Huffman bit.
+    schedule.append((1, None))
+    for i, bit in enumerate(_HUFFMAN_MINUS_ONE):
+        schedule.append((bit, 0xFF if i == len(_HUFFMAN_MINUS_ONE) - 1 else None))
+
+    # Pack bits into 16-bit words, interleaving raw bytes and word-refill
+    # placeholders in the exact order the decompressor would read them.
+    word = cache_word & ((1 << bit_index_start) - 1)  # keep consumed low bits
+    bit_pos = bit_index_start
+    first_word: int | None = None
+    stream = bytearray()
+    placeholder_pos: int | None = None  # stream offset of pending word placeholder
+
+    for bit_val, raw_byte in schedule:
+        if bit_val:
+            word |= 1 << bit_pos
+        bit_pos += 1
+
+        if bit_pos == 16:
+            if first_word is None:
+                first_word = word
+            elif placeholder_pos is not None:  # pragma: no branch
+                struct.pack_into("<H", stream, placeholder_pos, word)
+
+            word = 0
+            bit_pos = 0
+
+            # Reserve 2 bytes for the NEXT word (cache refill reads happen
+            # before the operation's raw byte).
+            placeholder_pos = len(stream)
+            stream.extend(b"\x00\x00")
+
+        if raw_byte is not None:
+            stream.append(raw_byte)
+
+    # Fill the last pending placeholder (partial or full final word).
+    if first_word is None:  # pragma: no cover
+        first_word = word
+    elif placeholder_pos is not None:  # pragma: no branch
+        struct.pack_into("<H", stream, placeholder_pos, word)
+
+    return first_word, bytes(stream)
+
+
+def rewrite_code(original: bytes, new_code: bytes) -> bytes:
+    """Re-encode the entire code image as literals in the PKLITE stream.
+
+    Unlike compress() which byte-patches existing literals, this replaces the
+    entire compressed code image.  Useful when byte-patching is impossible
+    (e.g., modified bytes are back-references).  The resulting file is larger
+    because no LZ77 compression is used, but it decompresses correctly.
+    """
+    params = _validate_pklite(original)
+    first_word, stream = _encode_tail(0, 0, new_code)
+
+    end_pos = _find_end_marker_pos(original, params)
+    reloc_and_footer = original[end_pos:]
+
+    out = bytearray(original[: params.comp_start])
+    out.extend(struct.pack("<H", first_word))
+    out.extend(stream)
+    out.extend(reloc_and_footer)
+
+    # Update MZ header: file size
+    file_size = len(out)
+    pages = (file_size + 0x1FF) >> 9
+    last_page = file_size & 0x1FF
+    struct.pack_into("<HH", out, 2, last_page, pages)
+
+    # Update min_extra: the decompressed code might be larger than original
+    orig_decompressed = decompress(original)
+    header_para = struct.unpack_from("<H", orig_decompressed, 8)[0]
+    orig_code_size = len(orig_decompressed) - header_para * 16
+    if len(new_code) > orig_code_size:  # pragma: no branch
+        extra_paras = (len(new_code) - orig_code_size + 15) >> 4
+        old_min_extra = struct.unpack_from("<H", out, 0x0A)[0]
+        struct.pack_into("<H", out, 0x0A, old_min_extra + extra_paras)
+
+    return bytes(out)
+
+
+def _find_end_marker_pos(data: bytes, params: _PkliteParams) -> int:
+    """Find the file position right after the end-of-stream 0xFF byte."""
+    bt_count = _BT_COUNT_LARGE
+    pos = params.comp_start
+    bit_index = 15
+    bit_cache = 0
+
+    def get_byte() -> int:
+        nonlocal pos
+        b = data[pos]
+        pos += 1
+        return b
+
+    def next_bit() -> int:
+        nonlocal bit_index, bit_cache
+        bit = (bit_cache >> bit_index) & 1
+        bit_index += 1
+        if bit_index == 16:
+            bit_cache = get_byte() | (get_byte() << 8)
+            bit_index = 0
+        return bit
+
+    next_bit()  # prime
+
+    while True:
+        if next_bit():
+            count = _bt_read(bt_count, next_bit)
+            if count == -1:
+                code = get_byte()
+                if code == 0xFE:
+                    continue
+                if code == 0xFF:
+                    return pos
+                count = code + 25
+            if count != 2:
+                _bt_read(_BT_OFFSET, next_bit)
+            get_byte()
+        else:
+            get_byte()
+
+
 def _patch_compressed(
     original: bytes,
     params: _PkliteParams,
