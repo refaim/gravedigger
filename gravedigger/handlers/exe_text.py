@@ -144,6 +144,245 @@ _STRING_TABLE: list[tuple[int, str, list[int]]] = [
 ]
 
 
+_FONT_STUB_SEG_OFFSET = 16  # offset of font_seg immediate within the stub
+
+
+def _build_font_stub(font_seg: int) -> bytes:
+    """Build a far-call stub that sets video mode 3 and loads a CP866 font.
+
+    The stub sets VGA text mode 3 via ``INT 10h`` and then writes a
+    256-character 8x16 user font from ``font_seg:0000`` directly into
+    VGA character-generator RAM (plane 2) using hardware port I/O.
+    Direct VGA access is used instead of ``INT 10h, AX=1110h`` because
+    the game hooks INT 10h and does not pass sub-function AH=11h to the
+    BIOS.
+
+    Args:
+        font_seg: 16-bit real-mode segment where the font bitmap resides.
+
+    Returns:
+        89 bytes of 16-bit x86 machine code ending with ``RETF``.
+    """
+    seg_lo = font_seg & 0xFF
+    seg_hi = (font_seg >> 8) & 0xFF
+    return bytes(
+        [
+            # --- First INT 10h mode 3 (may load ROM font, we overwrite below) ---
+            0xB8,
+            0x03,
+            0x00,  # mov ax, 0x0003
+            0xCD,
+            0x10,  # int 0x10
+            # --- Save general registers ---
+            0x1E,  # push ds
+            0x06,  # push es
+            0x56,  # push si
+            0x57,  # push di
+            0x51,  # push cx
+            # --- ES = A000h (VGA memory) ---
+            0xB8,
+            0x00,
+            0xA0,  # mov ax, 0xA000
+            0x8E,
+            0xC0,  # mov es, ax
+            # --- DS:SI = font data ---
+            0xB8,
+            seg_lo,
+            seg_hi,  # mov ax, font_seg  [RELOCATED]
+            0x8E,
+            0xD8,  # mov ds, ax
+            0x31,
+            0xF6,  # xor si, si
+            # --- Program VGA sequencer for plane-2 access ---
+            0xBA,
+            0xC4,
+            0x03,  # mov dx, 0x03C4
+            0xB8,
+            0x00,
+            0x01,  # mov ax, 0x0100  (Sync Reset)
+            0xEF,  # out dx, ax
+            0xB8,
+            0x02,
+            0x04,  # mov ax, 0x0402  (Map Mask = plane 2)
+            0xEF,  # out dx, ax
+            0xB8,
+            0x04,
+            0x06,  # mov ax, 0x0604  (Mem Mode = sequential)
+            0xEF,  # out dx, ax
+            0xB8,
+            0x00,
+            0x03,  # mov ax, 0x0300  (Restart sequencer)
+            0xEF,  # out dx, ax
+            # --- Program VGA graphics controller for plane-2 access ---
+            0xBA,
+            0xCE,
+            0x03,  # mov dx, 0x03CE
+            0xB8,
+            0x04,
+            0x02,  # mov ax, 0x0204  (Read Map = plane 2)
+            0xEF,  # out dx, ax
+            0xB8,
+            0x05,
+            0x00,  # mov ax, 0x0005  (Mode = direct)
+            0xEF,  # out dx, ax
+            0xB8,
+            0x06,
+            0x00,  # mov ax, 0x0006  (Misc = A000, linear)
+            0xEF,  # out dx, ax
+            # --- Copy 256 chars x 16 bytes into 32-byte VGA slots ---
+            0xFC,  # cld
+            0x31,
+            0xFF,  # xor di, di
+            0xB9,
+            0x00,
+            0x01,  # mov cx, 0x0100
+            # .char_loop:
+            0x51,  # push cx
+            0xB9,
+            0x08,
+            0x00,  # mov cx, 8
+            0xF3,
+            0xA5,  # rep movsw        (copy 16 bytes)
+            0x83,
+            0xC7,
+            0x10,  # add di, 16       (skip 16-byte pad)
+            0x59,  # pop cx
+            0xE2,
+            0xF4,  # loop .char_loop  (cx--)
+            # --- Restore general registers ---
+            0x59,  # pop cx
+            0x5F,  # pop di
+            0x5E,  # pop si
+            0x07,  # pop es
+            0x1F,  # pop ds
+            # --- Second INT 10h mode 3: restores ALL VGA registers ---
+            # (font in plane 2 survives if the game's hook skips ROM font load)
+            0x1E,  # push ds  (preserve around INT 10h)
+            0x56,  # push si
+            0xB8,
+            0x03,
+            0x00,  # mov ax, 0x0003
+            0xCD,
+            0x10,  # int 0x10
+            0x5E,  # pop si
+            0x1F,  # pop ds
+            0xCB,  # retf
+        ]
+    )
+
+
+_EXIT_CALL_OFFSET = 0x679
+_EXPECTED_OPCODES = b"\xb8\x03\x00\xcd\x10"
+
+# The C startup code at code offset 0x6B contains ``ADD DI, imm16`` (81 C7 xx xx)
+# where the immediate is the program data size (bytes from DS).  The startup uses
+# this to calculate how much memory to keep via INT 21h AH=4Ah.  When we append
+# font+stub past the original image, this constant must be increased so the
+# resized block still covers the appended data.
+_RESIZE_ADD_OFFSET = 0x6B
+_RESIZE_ADD_OPCODE = b"\x81\xc7"
+_RESIZE_IMM_OFFSET = 0x6D  # offset of the 16-bit immediate within the instruction
+
+# The C startup has a fallback path at code offset 0x8C: when [DS:4990] == 0 it
+# overrides the calculated DI with 0x1000 paragraphs (64 KB from DS).  This makes
+# ``SHL DI, 4`` overflow the 16-bit register to 0, so SP = 0 and the stack wraps
+# to DS:FFFE growing downward — right through the area where we appended the font
+# and stub.  Patching the JNE (75h) to JMP (EBh) forces the startup to use the
+# calculated DI (which accounts for our increased data_size), placing SP correctly
+# above the appended data.
+_RESIZE_JNE_OFFSET = 0x8C
+_RESIZE_JNE_OPCODE = 0x75
+
+
+def _patch_exit_font(decompressed: bytearray, code_start: int, font_data: bytes) -> None:
+    """Patch decompressed EXE to load a custom CP866 font before the exit screen."""
+    # Validate the call site
+    call_site = code_start + _EXIT_CALL_OFFSET
+    if decompressed[call_site : call_site + 5] != _EXPECTED_OPCODES:
+        msg = (
+            f"Expected B8 03 00 CD 10 at code offset 0x{_EXIT_CALL_OFFSET:X}, "
+            f"got {decompressed[call_site : call_site + 5].hex(' ')}"
+        )
+        raise ValueError(msg)
+
+    # --- Paragraph-align and append font + stub ---
+    append_offset = (len(decompressed) + 15) & ~15
+    padding = append_offset - len(decompressed)
+    decompressed.extend(b"\x00" * padding)
+
+    font_file_offset = append_offset
+    font_code_offset = font_file_offset - code_start
+    font_seg = font_code_offset // 16
+
+    stub = _build_font_stub(font_seg)
+    stub_file_offset = font_file_offset + len(font_data)
+    stub_code_offset = stub_file_offset - code_start
+    stub_seg = stub_code_offset // 16
+
+    decompressed.extend(font_data)
+    decompressed.extend(stub)
+
+    # --- Write far call at the call site ---
+    # 9A offset_lo offset_hi seg_lo seg_hi
+    decompressed[call_site] = 0x9A
+    struct.pack_into("<HH", decompressed, call_site + 1, 0x0000, stub_seg)
+
+    # --- Add relocation entries ---
+    e_lfarlc = struct.unpack_from("<H", decompressed, 0x18)[0]
+    e_crlc = struct.unpack_from("<H", decompressed, 0x06)[0]
+    reloc_end = e_lfarlc + e_crlc * 4
+    free_space = code_start - reloc_end
+    if free_space < 8:
+        msg = f"Not enough space for 2 relocation entries: {free_space} bytes free"
+        raise ValueError(msg)
+
+    # Entry 1: far call segment field at code offset 0x67B
+    call_seg_field = _EXIT_CALL_OFFSET + 3
+    reloc1_offset = call_seg_field % 16
+    reloc1_segment = call_seg_field // 16
+    struct.pack_into("<HH", decompressed, reloc_end, reloc1_offset, reloc1_segment)
+
+    # Entry 2: font_seg immediate in stub (at stub_code_offset + _FONT_STUB_SEG_OFFSET)
+    font_seg_field = stub_code_offset + _FONT_STUB_SEG_OFFSET
+    reloc2_offset = font_seg_field % 16
+    reloc2_segment = font_seg_field // 16
+    struct.pack_into("<HH", decompressed, reloc_end + 4, reloc2_offset, reloc2_segment)
+
+    # --- Update MZ header ---
+    struct.pack_into("<H", decompressed, 0x06, e_crlc + 2)
+
+    file_size = len(decompressed)
+    struct.pack_into("<HH", decompressed, 2, file_size & 0x1FF, (file_size + 0x1FF) >> 9)
+
+    # --- Update data-size constant in C startup resize code ---
+    # The startup calculates: total = data_size + stack_size, then resizes the
+    # memory block to that many bytes (from DS).  We must ensure data_size covers
+    # everything up to the end of the appended stub.
+    resize_site = code_start + _RESIZE_ADD_OFFSET
+    if decompressed[resize_site : resize_site + 2] != _RESIZE_ADD_OPCODE:
+        msg = (
+            f"Expected 81 C7 (ADD DI, imm16) at code offset 0x{_RESIZE_ADD_OFFSET:X}, "
+            f"got {decompressed[resize_site : resize_site + 2].hex(' ')}"
+        )
+        raise ValueError(msg)
+    stub_end_code_offset = stub_code_offset + len(stub)
+    new_data_size = stub_end_code_offset - _DS_BASE
+    imm_site = code_start + _RESIZE_IMM_OFFSET
+    current_data_size = struct.unpack_from("<H", decompressed, imm_site)[0]
+    if new_data_size > current_data_size:
+        struct.pack_into("<H", decompressed, imm_site, new_data_size)
+
+    # --- Prevent startup DI override (SP=0 stack wrap) ---
+    jne_site = code_start + _RESIZE_JNE_OFFSET
+    if decompressed[jne_site] != _RESIZE_JNE_OPCODE:
+        msg = (
+            f"Expected JNE (75h) at code offset 0x{_RESIZE_JNE_OFFSET:X}, "
+            f"got {decompressed[jne_site]:02X}"
+        )
+        raise ValueError(msg)
+    decompressed[jne_site] = 0xEB  # JMP rel8
+
+
 _LZEXE_SIG = b"LZ91"
 _PKLITE_SIG = b"PKLITE"
 
@@ -346,6 +585,8 @@ class ExeTextHandler(FormatHandler):
             # Re-encoding into the compression format is impractical because
             # the decompressor stubs have hardcoded size values.
             decompressed.extend(extra_block)
+            if xb.font is not None:
+                _patch_exit_font(decompressed, code_start, xb.font)
             file_size = len(decompressed)
             struct.pack_into("<HH", decompressed, 2, file_size & 0x1FF, (file_size + 0x1FF) >> 9)
             # Fix MinAlloc/MaxAlloc: the decompressed header was only used by

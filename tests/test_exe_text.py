@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import struct
 from pathlib import Path
 
 import pytest
 from openpyxl import load_workbook
 
 from gravedigger.core.handler import Manifest
-from gravedigger.handlers.exe_text import ExeTextHandler, _decompress_exe
+from gravedigger.handlers.exe_text import (
+    ExeTextHandler,
+    _build_font_stub,
+    _decompress_exe,
+    _patch_exit_font,
+)
 
 _GAME_ROOT = Path(__file__).resolve().parent.parent / "game"
 _EXE_VARIANTS = [
@@ -253,6 +259,176 @@ class TestRepack:
         )
 
 
+class TestFontStub:
+    def test_returns_bytes(self) -> None:
+        result = _build_font_stub(0x1234)
+        assert isinstance(result, bytes)
+
+    def test_starts_with_mode_set(self) -> None:
+        result = _build_font_stub(0x1234)
+        assert result[:5] == b"\xb8\x03\x00\xcd\x10"
+
+    def test_ends_with_retf(self) -> None:
+        result = _build_font_stub(0x1234)
+        assert result[-1:] == b"\xcb"
+
+    def test_contains_one_int10h(self) -> None:
+        result = _build_font_stub(0x1234)
+        count = 0
+        for i in range(len(result) - 1):
+            if result[i] == 0xCD and result[i + 1] == 0x10:
+                count += 1
+        assert count == 1
+
+    def test_font_seg_embedded(self) -> None:
+        result = _build_font_stub(0x1234)
+        idx = result.index(b"\xb8\x34\x12")
+        assert idx > 4
+
+    def test_font_seg_different_value(self) -> None:
+        result = _build_font_stub(0xABCD)
+        assert b"\xb8\xcd\xab" in result
+
+    def test_total_length(self) -> None:
+        result = _build_font_stub(0x1234)
+        assert len(result) == 165
+
+
+class TestPatchExitFont:
+    """Tests for _patch_exit_font on real game EXEs."""
+
+    @staticmethod
+    def _decompress(exe_path: Path) -> tuple[bytearray, int]:
+        data = exe_path.read_bytes()
+        dec = bytearray(_decompress_exe(data))
+        code_start = struct.unpack_from("<H", dec, 8)[0] * 16
+        return dec, code_start
+
+    def test_far_call_written(self, exe_path: Path) -> None:
+        exe, code_start = self._decompress(exe_path)
+        _patch_exit_font(exe, code_start, bytes(4096))
+        assert exe[code_start + 0x679] == 0x9A
+
+    def test_far_call_offset_is_zero(self, exe_path: Path) -> None:
+        exe, code_start = self._decompress(exe_path)
+        _patch_exit_font(exe, code_start, bytes(4096))
+        call_addr = code_start + 0x679
+        offset = struct.unpack_from("<H", exe, call_addr + 1)[0]
+        assert offset == 0x0000
+
+    def test_far_call_segment_points_to_stub(self, exe_path: Path) -> None:
+        exe, code_start = self._decompress(exe_path)
+        original_len = len(exe)
+        font_data = bytes(4096)
+        _patch_exit_font(exe, code_start, font_data)
+
+        append_offset = (original_len + 15) & ~15
+        stub_file_offset = append_offset + len(font_data)
+        expected_seg = (stub_file_offset - code_start) // 16
+
+        call_addr = code_start + 0x679
+        actual_seg = struct.unpack_from("<H", exe, call_addr + 3)[0]
+        assert actual_seg == expected_seg
+
+    def test_font_appended_paragraph_aligned(self, exe_path: Path) -> None:
+        exe, code_start = self._decompress(exe_path)
+        original_len = len(exe)
+        font_data = bytes(range(256)) * 16  # 4096 bytes, recognizable pattern
+        _patch_exit_font(exe, code_start, font_data)
+
+        assert len(exe) > original_len
+        append_start = (original_len + 15) & ~15
+        assert append_start % 16 == 0
+        assert exe[append_start : append_start + 4096] == font_data
+
+    def test_stub_follows_font(self, exe_path: Path) -> None:
+        exe, code_start = self._decompress(exe_path)
+        original_len = len(exe)
+        _patch_exit_font(exe, code_start, bytes(4096))
+
+        append_start = (original_len + 15) & ~15
+        stub_start = append_start + 4096
+        assert exe[stub_start : stub_start + 5] == b"\xb8\x03\x00\xcd\x10"
+        stub = _build_font_stub(0)
+        assert exe[stub_start + len(stub) - 1] == 0xCB
+
+    def test_two_reloc_entries_added(self, exe_path: Path) -> None:
+        exe, code_start = self._decompress(exe_path)
+        orig_crlc = struct.unpack_from("<H", exe, 6)[0]
+        _patch_exit_font(exe, code_start, bytes(4096))
+        assert struct.unpack_from("<H", exe, 6)[0] == orig_crlc + 2
+
+    def test_reloc_entry1_targets_far_call_segment(self, exe_path: Path) -> None:
+        exe, code_start = self._decompress(exe_path)
+        orig_crlc = struct.unpack_from("<H", exe, 6)[0]
+        _patch_exit_font(exe, code_start, bytes(4096))
+        e_lfarlc = struct.unpack_from("<H", exe, 0x18)[0]
+        r1_off, r1_seg = struct.unpack_from("<HH", exe, e_lfarlc + orig_crlc * 4)
+        assert r1_seg * 16 + r1_off == 0x67C
+
+    def test_reloc_entry2_targets_font_seg_in_stub(self, exe_path: Path) -> None:
+        exe, code_start = self._decompress(exe_path)
+        original_len = len(exe)
+        orig_crlc = struct.unpack_from("<H", exe, 6)[0]
+        _patch_exit_font(exe, code_start, bytes(4096))
+
+        e_lfarlc = struct.unpack_from("<H", exe, 0x18)[0]
+        r2_off, r2_seg = struct.unpack_from("<HH", exe, e_lfarlc + (orig_crlc + 1) * 4)
+        append_offset = (original_len + 15) & ~15
+        stub_code_offset = (append_offset + 4096) - code_start
+        from gravedigger.handlers.exe_text import _FONT_STUB_SEG_OFFSET
+
+        expected = stub_code_offset + _FONT_STUB_SEG_OFFSET
+        assert r2_seg * 16 + r2_off == expected
+
+    def test_file_size_in_header_updated(self, exe_path: Path) -> None:
+        exe, code_start = self._decompress(exe_path)
+        _patch_exit_font(exe, code_start, bytes(4096))
+        file_size = len(exe)
+        assert struct.unpack_from("<H", exe, 2)[0] == file_size & 0x1FF
+        assert struct.unpack_from("<H", exe, 4)[0] == (file_size + 0x1FF) >> 9
+
+    def test_font_seg_in_stub_matches_font_position(self, exe_path: Path) -> None:
+        exe, code_start = self._decompress(exe_path)
+        original_len = len(exe)
+        _patch_exit_font(exe, code_start, bytes(4096))
+
+        append_offset = (original_len + 15) & ~15
+        expected_font_seg = (append_offset - code_start) // 16
+
+        from gravedigger.handlers.exe_text import _FONT_STUB_SEG_OFFSET
+
+        stub_start = append_offset + 4096
+        actual_font_seg = struct.unpack_from("<H", exe, stub_start + _FONT_STUB_SEG_OFFSET)[0]
+        assert actual_font_seg == expected_font_seg
+
+    def test_resize_constant_updated(self, exe_path: Path) -> None:
+        """Data-size constant in startup code covers appended font+stub."""
+        from gravedigger.handlers.exe_text import (
+            _DS_BASE,
+            _RESIZE_IMM_OFFSET,
+        )
+
+        exe, code_start = self._decompress(exe_path)
+        original_len = len(exe)
+        _patch_exit_font(exe, code_start, bytes(4096))
+
+        append_offset = (original_len + 15) & ~15
+        stub = _build_font_stub(0)
+        stub_end_code = (append_offset + 4096 + len(stub)) - code_start
+        data_size = struct.unpack_from("<H", exe, code_start + _RESIZE_IMM_OFFSET)[0]
+        assert data_size >= stub_end_code - _DS_BASE
+
+    def test_startup_jne_patched_to_jmp(self, exe_path: Path) -> None:
+        """JNE at 0x8C is patched to JMP to prevent DI override / SP=0 wrap."""
+        from gravedigger.handlers.exe_text import _RESIZE_JNE_OFFSET
+
+        exe, code_start = self._decompress(exe_path)
+        assert exe[code_start + _RESIZE_JNE_OFFSET] == 0x75  # JNE before
+        _patch_exit_font(exe, code_start, bytes(4096))
+        assert exe[code_start + _RESIZE_JNE_OFFSET] == 0xEB  # JMP after
+
+
 class TestFilePatterns:
     def test_file_patterns(self, handler: ExeTextHandler) -> None:
         assert "DAVE.EXE" in handler.file_patterns
@@ -394,3 +570,99 @@ class TestExitScreen:
 
         assert repacked_dec[abs_offset] == orig.image_data[0] ^ 0xFF
         assert repacked_dec[abs_offset + 1 : abs_offset + _EXIT_SCREEN_SIZE] == orig.image_data[1:]
+
+
+class TestFontIntegration:
+    """Integration tests for font embedding during repack."""
+
+    def test_repack_with_font_embeds_stub(
+        self, handler: ExeTextHandler, exe_path: Path, tmp_path: Path
+    ) -> None:
+        """Repack with XBIN containing a font embeds font+stub in output EXE."""
+        import struct as _struct
+
+        from gravedigger.xbin import build, parse
+
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
+        manifest = handler.unpack(exe_path, translatable, meta)
+
+        # Modify exit screen image to force needs_relocation path
+        xb_path = translatable / "exit_screen.xb"
+        orig = parse(xb_path.read_bytes())
+        modified_image = bytes([orig.image_data[0] ^ 0xFF]) + orig.image_data[1:]
+        assert orig.font is not None
+        new_xb = build(
+            orig.width,
+            orig.height,
+            modified_image,
+            font=orig.font,
+            font_height=orig.font_height,
+        )
+        xb_path.write_bytes(new_xb)
+
+        repack_path = tmp_path / "repacked.exe"
+        handler.repack(manifest, translatable, meta, repack_path)
+
+        repacked = repack_path.read_bytes()
+        header_para = _struct.unpack_from("<H", repacked, 8)[0]
+        code_start = header_para * 16
+
+        # Far call at offset 0x679
+        assert repacked[code_start + 0x679] == 0x9A
+
+        # Font data is present in the output
+        assert orig.font in repacked
+
+        # Stub ends with RETF (0xCB)
+        stub = _build_font_stub(0)
+        # Find the stub by its mode-set prefix after the font
+        font_pos = repacked.index(orig.font)
+        stub_start = font_pos + len(orig.font)
+        assert repacked[stub_start : stub_start + 5] == b"\xb8\x03\x00\xcd\x10"
+        assert repacked[stub_start + len(stub) - 1] == 0xCB
+
+        # Relocation count increased by 2
+        e_crlc = _struct.unpack_from("<H", repacked, 6)[0]
+        orig_dec = _decompress_exe(exe_path.read_bytes())
+        orig_crlc = _struct.unpack_from("<H", orig_dec, 6)[0]
+        assert e_crlc == orig_crlc + 2
+
+    def test_repack_without_font_no_patch(
+        self, handler: ExeTextHandler, exe_path: Path, tmp_path: Path
+    ) -> None:
+        """Repack with XBIN without font does not patch the EXE with font stub."""
+        import struct as _struct
+
+        from gravedigger.xbin import build, parse
+
+        translatable = tmp_path / "translatable"
+        meta = tmp_path / "meta"
+        translatable.mkdir()
+        meta.mkdir()
+        manifest = handler.unpack(exe_path, translatable, meta)
+
+        # Rebuild XBIN without font but with modified image to force needs_relocation
+        xb_path = translatable / "exit_screen.xb"
+        orig = parse(xb_path.read_bytes())
+        modified_image = bytes([orig.image_data[0] ^ 0xFF]) + orig.image_data[1:]
+        new_xb = build(
+            orig.width,
+            orig.height,
+            modified_image,
+            font=None,  # No font
+            font_height=orig.font_height,
+        )
+        xb_path.write_bytes(new_xb)
+
+        repack_path = tmp_path / "repacked.exe"
+        handler.repack(manifest, translatable, meta, repack_path)
+
+        repacked = repack_path.read_bytes()
+        header_para = _struct.unpack_from("<H", repacked, 8)[0]
+        code_start = header_para * 16
+
+        # Original opcodes should remain (no far call)
+        assert repacked[code_start + 0x679 : code_start + 0x679 + 3] == b"\xb8\x03\x00"
