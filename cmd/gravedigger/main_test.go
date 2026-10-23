@@ -24,7 +24,7 @@ func TestRunUsage(t *testing.T) {
 
 func TestFontAtlasVersion(t *testing.T) {
 	var out, stderr bytes.Buffer
-	if code := run([]string{"--version"}, &out, &stderr); code != 0 || out.String() != "gravedigger 3.0.0\n" || stderr.Len() != 0 {
+	if code := run([]string{"--version"}, &out, &stderr); code != 0 || out.String() != "gravedigger 3.0.1\n" || stderr.Len() != 0 {
 		t.Fatalf("version = %q, code = %d, stderr = %q", out.String(), code, stderr.String())
 	}
 }

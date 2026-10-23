@@ -88,9 +88,18 @@ func TestFontSheetRoundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = f.Close() }()
+	dimension, err := f.GetSheetDimension("Шрифт")
+	if err != nil || dimension != "A1:B97" {
+		t.Fatalf("streaming readers need the complete font sheet dimension, got %q: %v", dimension, err)
+	}
 	rows, err := f.GetRows("Шрифт", excelize.Options{RawCellValue: true})
-	if err != nil || len(rows) != 97 || rows[0][0] != "slot" || rows[0][1] != "symbol" || rows[1][1] != " " || rows[96][0] != "127" || rows[96][1] != "служебный" {
+	if err != nil || len(rows) != 97 || rows[0][0] != "number" || rows[0][1] != "symbol" || rows[1][1] != " " || rows[96][0] != "96" || rows[96][1] != "служебный" {
 		t.Fatalf("unexpected sheet: %v, %v", rows, err)
+	}
+	for number, row := range rows[1:] {
+		if row[0] != strconv.Itoa(number+1) {
+			t.Fatalf("wrong visible number in row %d: %q", number+2, row[0])
+		}
 	}
 	value, err := f.GetCellValue("other", "C4")
 	if err != nil || value != "keep me" {
@@ -100,12 +109,12 @@ func TestFontSheetRoundtrip(t *testing.T) {
 
 func TestFontSheetEditableMappingAndOrder(t *testing.T) {
 	raw := editFontWorkbook(t, fontWorkbook(t), func(f *excelize.File) error {
-		for _, row := range []struct{ cell, value string }{{"A2", "65"}, {"B2", "Я"}, {"A35", "32"}, {"B35", " "}} {
+		for _, row := range []struct{ cell, value string }{{"A2", "34"}, {"B2", "Я"}, {"A35", "1"}, {"B35", " "}} {
 			if err := f.SetCellStr("Шрифт", row.cell, row.value); err != nil {
 				return err
 			}
 		}
-		// A display format must not change the raw symbol or slot.
+		// A display format must not change the raw symbol or visible number.
 		style, err := f.NewStyle(&excelize.Style{NumFmt: 1})
 		if err != nil {
 			return err
@@ -129,10 +138,10 @@ func TestFontSheetEditableMappingAndOrder(t *testing.T) {
 	}
 }
 
-func TestFontSheetReserved127(t *testing.T) {
+func TestFontSheetReserved96(t *testing.T) {
 	valid := fontWorkbook(t)
 	shuffled := editFontWorkbook(t, valid, func(f *excelize.File) error {
-		for _, row := range []struct{ cell, value string }{{"A2", "127"}, {"B2", "служебный"}, {"A97", "32"}, {"B97", " "}} {
+		for _, row := range []struct{ cell, value string }{{"A2", "96"}, {"B2", "служебный"}, {"A97", "1"}, {"B97", " "}} {
 			if err := f.SetCellStr("Шрифт", row.cell, row.value); err != nil {
 				return err
 			}
@@ -147,13 +156,13 @@ func TestFontSheetReserved127(t *testing.T) {
 		t.Fatal("moving reserved row changed font, including the original DEL mapping")
 	}
 	duplicate := editFontWorkbook(t, valid, func(f *excelize.File) error {
-		if err := f.SetCellStr("Шрифт", "A2", "127"); err != nil {
+		if err := f.SetCellStr("Шрифт", "A2", "96"); err != nil {
 			return err
 		}
 		return f.SetCellStr("Шрифт", "B2", "служебный")
 	})
-	if err := readFontSheet(duplicate, &f); err == nil || !strings.Contains(err.Error(), "duplicate slot") {
-		t.Fatalf("duplicate reserved slot: %v", err)
+	if err := readFontSheet(duplicate, &f); err == nil || !strings.Contains(err.Error(), "duplicate cell number") || !strings.Contains(err.Error(), "96") {
+		t.Fatalf("duplicate reserved number: %v", err)
 	}
 }
 
@@ -162,19 +171,20 @@ func TestFontSheetRejectsInvalidWorkbooks(t *testing.T) {
 	for _, tc := range []struct {
 		name, cell, value, message string
 	}{
-		{"header slot", "A1", "id", "columns"},
+		{"header number", "A1", "id", "columns"},
+		{"old header", "A1", "slot", "columns"},
 		{"header symbol", "B1", "text", "columns"},
 		{"extra header", "C1", "extra", "columns"},
 		{"extra column", "C2", "extra", "columns"},
-		{"missing slot", "A2", "", "slot"},
-		{"duplicate slot", "A3", "32", "slot"},
-		{"low slot", "A2", "31", "slot"},
-		{"duplicate control slot", "A97", "32", "slot"},
-		{"high slot", "A2", "128", "slot"},
-		{"non-number", "A2", "x", "slot"},
-		{"fraction", "A2", "32.5", "slot"},
-		{"leading zero", "A2", "032", "slot"},
-		{"plus", "A2", "+32", "slot"},
+		{"missing number", "A2", "", "number"},
+		{"duplicate number", "A3", "1", "number"},
+		{"low number", "A2", "0", "number"},
+		{"duplicate control number", "A97", "1", "number"},
+		{"high number", "A2", "97", "number"},
+		{"non-number", "A2", "x", "number"},
+		{"fraction", "A2", "1.5", "number"},
+		{"leading zero", "A2", "01", "number"},
+		{"plus", "A2", "+1", "number"},
 		{"empty symbol", "B3", "", "symbol"},
 		{"many symbols", "B3", "AB", "symbol"},
 		{"control symbol", "B3", "\n", "symbol"},
@@ -183,12 +193,12 @@ func TestFontSheetRejectsInvalidWorkbooks(t *testing.T) {
 		{"replacement", "B3", "\ufffd", "symbol"},
 		{"zero-width", "B3", "\u200b", "symbol"},
 		{"duplicate symbol", "B3", "A", "duplicate"},
-		{"space reserved", "B2", "Я", "reserved"},
-		{"digit reserved", "B18", "Я", "reserved"},
-		{"underscore reserved", "B65", "Я", "reserved"},
-		{"control label", "B97", "Я", "reserved"},
-		{"control DEL", "B97", "\x7f", "reserved"},
-		{"control whitespace", "B97", "служебный ", "reserved"},
+		{"space reserved", "B2", "Я", "number 1"},
+		{"digit reserved", "B18", "Я", "number 17"},
+		{"underscore reserved", "B65", "Я", "number 64"},
+		{"control label", "B97", "Я", "number 96"},
+		{"control DEL", "B97", "\x7f", "number 96"},
+		{"control whitespace", "B97", "служебный ", "number 96"},
 		{"control empty", "B97", "", "symbol"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -200,6 +210,9 @@ func TestFontSheetRejectsInvalidWorkbooks(t *testing.T) {
 			err := readFontSheet(raw, &f)
 			if err == nil || !strings.Contains(err.Error(), tc.message) {
 				t.Fatalf("got %v, want %q", err, tc.message)
+			}
+			if strings.Contains(err.Error(), "slot") {
+				t.Fatalf("native numbering leaked into a workbook error: %v", err)
 			}
 			if !reflect.DeepEqual(f, before) {
 				t.Fatal("invalid import partially changed font")
@@ -219,13 +232,13 @@ func TestFontSheetRejectsInvalidWorkbooks(t *testing.T) {
 	}
 	for _, count := range []int{0, 95, 97} {
 		t.Run("row count "+strconv.Itoa(count), func(t *testing.T) {
-			rows := [][]any{{"slot", "symbol"}}
+			rows := [][]any{{"number", "symbol"}}
 			for i := 0; i < count; i++ {
-				rows = append(rows, []any{i + 32, string(rune(i + 32))})
+				rows = append(rows, []any{i + 1, string(rune(i + 32))})
 			}
 			f := fontSheetTestFont()
-			if err := readFontSheet(badWorkbook(t, rows, "Шрифт"), &f); err == nil {
-				t.Fatal("accepted wrong number of rows")
+			if err := readFontSheet(badWorkbook(t, rows, "Шрифт"), &f); err == nil || !strings.Contains(err.Error(), "1..96") {
+				t.Fatalf("wrong row count must identify visible numbers 1..96: %v", err)
 			}
 		})
 	}
@@ -233,7 +246,7 @@ func TestFontSheetRejectsInvalidWorkbooks(t *testing.T) {
 	if err := readFontSheet(badWorkbook(t, nil, "Шрифт"), &f); err == nil {
 		t.Fatal("accepted empty sheet")
 	}
-	if err := readFontSheet(badWorkbook(t, [][]any{{"slot"}}, "Шрифт"), &f); err == nil {
+	if err := readFontSheet(badWorkbook(t, [][]any{{"number"}}, "Шрифт"), &f); err == nil {
 		t.Fatal("accepted incomplete headers")
 	}
 	blankRow := editFontWorkbook(t, valid, func(f *excelize.File) error {

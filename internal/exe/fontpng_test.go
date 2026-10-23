@@ -7,6 +7,7 @@ import (
 	"image/draw"
 	"image/png"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -40,14 +41,19 @@ func editAtlasPNG(t *testing.T, raw []byte, edit func(*image.NRGBA)) []byte {
 	return atlasPNGBytes(t, img)
 }
 
-func atlasCell(slot int) (int, int) {
+func atlasCellOrigin(slot int) (int, int) {
 	return (slot - 32) % 16 * gameFontCellSize, (slot - 32) / 16 * gameFontCellSize
+}
+
+func atlasCell(slot int) (int, int) {
+	left, top := atlasCellOrigin(slot)
+	return left + 1, top + 1
 }
 
 func clearAtlasCell(img *image.NRGBA, slot int) {
 	left, top := atlasCell(slot)
-	for y := 0; y < gameFontCellSize/2; y++ {
-		for x := 0; x < gameFontCellSize; x++ {
+	for y := range 10 {
+		for x := range 16 {
 			img.SetNRGBA(left+x, top+y, color.NRGBA{})
 		}
 	}
@@ -80,20 +86,20 @@ func TestGameFontPNGNativeBitsAndIndependentRoundtrip(t *testing.T) {
 		x, y int
 		want color.NRGBA
 	}{
-		{0, 0, black},
-		{15, 0, black},
-		{4, 0, white},
-		{7, 0, cyan},
-		{8, 0, cyan},
-		{gameFontCellSize, 4, white},
-		{gameFontCellSize + 1, 4, black},
-		{gameFontCellSize + 2, 4, white},
-		{gameFontCellSize + 3, 4, black},
-		{gameFontCellSize + 4, 4, color.NRGBA{}},
-		{2*gameFontCellSize + 7, 0, white},
-		{15*gameFontCellSize + 7, 5*gameFontCellSize + 9, white},
-		{15*gameFontCellSize + 8, 5*gameFontCellSize + 9, white},
-		{gameFontAtlasWidth - 1, gameFontAtlasHeight - 1, color.NRGBA{}},
+		{1, 1, black},
+		{16, 1, black},
+		{5, 1, white},
+		{8, 1, cyan},
+		{9, 1, cyan},
+		{gameFontCellSize + 1, 5, white},
+		{gameFontCellSize + 2, 5, black},
+		{gameFontCellSize + 3, 5, white},
+		{gameFontCellSize + 4, 5, black},
+		{gameFontCellSize + 5, 5, color.NRGBA{}},
+		{2*gameFontCellSize + 8, 1, white},
+		{15*gameFontCellSize + 8, 5*gameFontCellSize + 10, white},
+		{15*gameFontCellSize + 9, 5*gameFontCellSize + 10, white},
+		{gameFontAtlasWidth - 1, gameFontAtlasHeight - 1, color.NRGBA{96, 96, 96, 255}},
 	} {
 		if got := color.NRGBAModel.Convert(img.At(check.x, check.y)).(color.NRGBA); got != check.want {
 			t.Fatalf("pixel (%d,%d): got %v, want %v", check.x, check.y, got, check.want)
@@ -189,10 +195,10 @@ func TestGameFontPNGRejectsOutOfCellGeometry(t *testing.T) {
 	}{
 		{"eleven columns", 'A', 10, 0, color.NRGBA{255, 255, 255, 255}, "width"},
 		{"sixteen columns", 'A', 15, 0, color.NRGBA{0, 255, 255, 255}, "width"},
-		{"first spare row", 'A', 0, 10, color.NRGBA{0, 0, 0, 255}, "row"},
-		{"last spare row", 127, 15, 15, color.NRGBA{255, 255, 255, 255}, "row"},
-		{"first spare column", 'A', 16, 0, color.NRGBA{0, 0, 0, 255}, "canvas"},
-		{"last spare column", 'A', 31, 15, color.NRGBA{0, 255, 255, 255}, "canvas"},
+		{"first spare row", 'A', 0, 10, color.NRGBA{0, 0, 0, 255}, "frame/number"},
+		{"last spare row", 127, 15, 17, color.NRGBA{255, 255, 255, 255}, "frame/number"},
+		{"first spare column", 'A', 16, 0, color.NRGBA{0, 0, 0, 255}, "frame/number"},
+		{"last spare column", 'A', 17, 9, color.NRGBA{0, 255, 255, 255}, "frame/number"},
 	} {
 		t.Run(check.name, func(t *testing.T) {
 			left, top := atlasCell(check.slot)
@@ -201,9 +207,9 @@ func TestGameFontPNGRejectsOutOfCellGeometry(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), check.contains) {
 				t.Fatalf("expected %s error, got %v", check.contains, err)
 			}
-			wantSlot := "slot 65"
+			wantSlot := "cell 34"
 			if check.slot == 127 {
-				wantSlot = "slot 127"
+				wantSlot = "cell 96"
 			}
 			if !strings.Contains(err.Error(), wantSlot) {
 				t.Fatal("error does not identify slot", err)
@@ -212,8 +218,8 @@ func TestGameFontPNGRejectsOutOfCellGeometry(t *testing.T) {
 	}
 	baseline.Glyphs[0].Width = 9
 	baseline.Glyphs[0].Pixels[0] = 0x0100 // Native x=15 padding is valid while unchanged.
-	raw := editAtlasPNG(t, gameFontPNG(baseline), func(img *image.NRGBA) { img.SetNRGBA(0, 0, color.NRGBA{255, 255, 255, 255}) })
-	if _, err := readGameFontPNG(raw, baseline); err == nil || !strings.Contains(err.Error(), "slot 32") {
+	raw := editAtlasPNG(t, gameFontPNG(baseline), func(img *image.NRGBA) { img.SetNRGBA(1, 1, color.NRGBA{255, 255, 255, 255}) })
+	if _, err := readGameFontPNG(raw, baseline); err == nil || !strings.Contains(err.Error(), "cell 1") || !strings.Contains(err.Error(), "width") {
 		t.Fatal("changed padding must not silently truncate", err)
 	}
 }
@@ -262,9 +268,10 @@ func TestGameFontPNGInvalidInput(t *testing.T) {
 			}
 			img := image.NewNRGBA64(decoded.Bounds())
 			draw.Draw(img, img.Bounds(), decoded, decoded.Bounds().Min, draw.Src)
-			img.SetNRGBA64(gameFontCellSize, 0, check.c)
+			left, top := atlasCell(33)
+			img.SetNRGBA64(left, top, check.c)
 			_, err = readGameFontPNG(atlasPNGBytes(t, img), baseline)
-			if err == nil || !strings.Contains(err.Error(), "color") || !strings.Contains(err.Error(), "slot 33") {
+			if err == nil || !strings.Contains(err.Error(), "color") || !strings.Contains(err.Error(), "cell 2") {
 				t.Fatal("unsupported pixel accepted or not identified", err)
 			}
 		})
@@ -277,11 +284,12 @@ func TestGameFontPNGPalettedAndTransparentPixels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	img := image.NewPaletted(decoded.Bounds(), color.Palette{color.NRGBA{}, color.NRGBA{255, 255, 255, 255}, color.NRGBA{0, 0, 0, 255}, color.NRGBA{0, 255, 255, 255}, color.NRGBA{128, 128, 128, 255}})
+	img := image.NewPaletted(decoded.Bounds(), color.Palette{color.NRGBA{}, color.NRGBA{255, 255, 255, 255}, color.NRGBA{0, 0, 0, 255}, color.NRGBA{0, 255, 255, 255}, color.NRGBA{96, 96, 96, 255}, color.NRGBA{160, 160, 160, 255}})
 	draw.Draw(img, img.Bounds(), decoded, decoded.Bounds().Min, draw.Src)
-	img.SetColorIndex(0, 0, 1)
-	img.SetColorIndex(1, 0, 2)
-	img.SetColorIndex(2, 0, 3)
+	left, top := atlasCell(32)
+	img.SetColorIndex(left, top, 1)
+	img.SetColorIndex(left+1, top, 2)
+	img.SetColorIndex(left+2, top, 3)
 	got, err := readGameFontPNG(atlasPNGBytes(t, img), baseline)
 	if err != nil {
 		t.Fatal(err)
@@ -302,51 +310,53 @@ func TestGameFontPNGReservedColorControlCannotChange(t *testing.T) {
 	for _, c := range []color.NRGBA{{255, 255, 255, 255}, {0, 0, 0, 255}, {0, 255, 255, 255}} {
 		raw := editAtlasPNG(t, gameFontPNG(baseline), func(img *image.NRGBA) { img.SetNRGBA(left, top, c) })
 		_, err := readGameFontPNG(raw, baseline)
-		if err == nil || !strings.Contains(err.Error(), "slot 127") || !strings.Contains(err.Error(), "color-control") {
+		if err == nil || !strings.Contains(err.Error(), "cell 96") || !strings.Contains(err.Error(), "color-control") {
 			t.Fatal("reserved slot bitmap change was accepted or not identified", err)
 		}
 	}
 }
 
-func TestGameFontPNGCellNumbers(t *testing.T) {
+func TestGameFontPNGCompactGrid(t *testing.T) {
 	baseline := emptyAtlasFont()
 	img, err := png.Decode(bytes.NewReader(gameFontPNG(baseline)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gameFontCellSize != 32 || img.Bounds() != image.Rect(0, 0, 512, 192) {
-		t.Fatal("numbered atlas must use 32x32 cells in a 512x192 image", img.Bounds())
+	if gameFontCellSize != 20 || img.Bounds() != image.Rect(0, 0, 320, 120) {
+		t.Fatal("compact atlas must use 20x20 cells in a 320x120 image", img.Bounds())
 	}
-	gray := color.NRGBA{128, 128, 128, 255}
+	gray := color.NRGBA{160, 160, 160, 255}
+	digits := [10]string{
+		"111101101101111", "010110010010111", "111001111100111", "111001111001111", "101101111001001",
+		"111100111001111", "111100111101111", "111001010010010", "111101111101111", "111101111001111",
+	}
 	for _, check := range []struct {
 		slot int
 		text string
 		left int
-	}{{32, "32", 8}, {99, "99", 8}, {100, "100", 4}, {127, "127", 4}} {
-		left, top := atlasCell(check.slot)
+	}{{32, "1", 8}, {40, "9", 8}, {41, "10", 6}, {63, "32", 6}, {85, "54", 6}, {98, "67", 6}, {119, "88", 6}, {127, "96", 6}} {
+		left, top := atlasCellOrigin(check.slot)
 		for digitIndex, digit := range check.text {
-			for row := range 16 {
-				var got byte
-				for col := range 8 {
-					pixel := color.NRGBAModel.Convert(img.At(left+check.left+digitIndex*8+col, top+16+row)).(color.NRGBA)
-					if pixel == gray {
-						got |= 0x80 >> col
-					} else if pixel != (color.NRGBA{}) {
-						t.Fatalf("slot %d label has a non-gray pixel: %v", check.slot, pixel)
+			for row := range 5 {
+				for col := range 3 {
+					pixel := color.NRGBAModel.Convert(img.At(left+check.left+digitIndex*4+col, top+13+row)).(color.NRGBA)
+					want := color.NRGBA{}
+					if digits[digit-'0'][row*3+col] == '1' {
+						want = gray
 					}
-				}
-				if want := bundledExitFont[int(digit)*16+row]; got != want {
-					t.Fatalf("slot %d digit %c row %d: got %02X, want fixed VGA %02X", check.slot, digit, row, got, want)
+					if pixel != want {
+						t.Fatalf("cell %d digit %c pixel (%d,%d): got %v, want canonical tiny font %v", check.slot-31, digit, col, row, pixel, want)
+					}
 				}
 			}
 		}
-		for row := range 16 {
-			for col := range gameFontCellSize {
-				if col >= check.left && col < check.left+len(check.text)*8 {
+		for row := 13; row <= 17; row++ {
+			for col := 1; col < gameFontCellSize-1; col++ {
+				if col >= check.left && col < check.left+len(check.text)*4-1 {
 					continue
 				}
-				if _, _, _, alpha := img.At(left+col, top+16+row).RGBA(); alpha != 0 {
-					t.Fatalf("slot %d number is not horizontally centered", check.slot)
+				if _, _, _, alpha := img.At(left+col, top+row).RGBA(); alpha != 0 {
+					t.Fatalf("cell %d number is not horizontally centered", check.slot-31)
 				}
 			}
 		}
@@ -361,35 +371,58 @@ func TestGameFontPNGCellNumbers(t *testing.T) {
 		t.Fatal(err)
 	}
 	for slot := 32; slot < 128; slot++ {
-		left, top := atlasCell(slot)
-		nonempty := false
-		for y := 16; y < gameFontCellSize; y++ {
+		left, top := atlasCellOrigin(slot)
+		minY, maxY := gameFontCellSize, -1
+		for y := range gameFontCellSize {
 			for x := range gameFontCellSize {
+				if x >= 1 && x <= 16 && y >= 1 && y <= 10 {
+					continue
+				}
 				a := color.NRGBAModel.Convert(img.At(left+x, top+y)).(color.NRGBA)
 				b := color.NRGBAModel.Convert(changed.At(left+x, top+y)).(color.NRGBA)
 				if a != b {
-					t.Fatalf("editing game digits changed fixed number of slot %d", slot)
+					t.Fatalf("editing game digits changed decorations of cell %d", slot-31)
 				}
-				nonempty = nonempty || a == gray
+				if a == gray {
+					minY, maxY = min(minY, y), max(maxY, y)
+				}
 			}
 		}
-		if !nonempty {
-			t.Fatalf("slot %d has no visible cell number", slot)
+		if minY != 13 || maxY != 17 || maxY-minY+1 >= baseline.Height {
+			t.Fatalf("cell %d number must be five pixels tall and smaller than game glyphs, got rows %d..%d", slot-31, minY, maxY)
 		}
 	}
 }
 
-func TestGameFontPNGCellNumbersAreReadOnly(t *testing.T) {
+func TestGameFontPNGFramesAllCells(t *testing.T) {
+	img, err := png.Decode(bytes.NewReader(gameFontPNG(emptyAtlasFont())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := color.NRGBA{96, 96, 96, 255}
+	for slot := 32; slot < 128; slot++ {
+		left, top := atlasCellOrigin(slot)
+		for i := range gameFontCellSize {
+			for _, point := range []image.Point{{left + i, top}, {left + i, top + gameFontCellSize - 1}, {left, top + i}, {left + gameFontCellSize - 1, top + i}} {
+				if got := color.NRGBAModel.Convert(img.At(point.X, point.Y)).(color.NRGBA); got != frame {
+					t.Fatalf("cell %d frame pixel %v: got %v, want %v", slot-31, point, got, frame)
+				}
+			}
+		}
+	}
+}
+
+func TestGameFontPNGFrameAndNumbersAreReadOnly(t *testing.T) {
 	baseline := emptyAtlasFont()
 	raw := gameFontPNG(baseline)
 	img, err := png.Decode(bytes.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
-	gray := color.NRGBA{128, 128, 128, 255}
-	left, top := atlasCell(32)
+	gray := color.NRGBA{160, 160, 160, 255}
+	left, top := atlasCellOrigin(32)
 	x, y := -1, -1
-	for row := 16; row < gameFontCellSize; row++ {
+	for row := 13; row <= 17; row++ {
 		for col := range gameFontCellSize {
 			if color.NRGBAModel.Convert(img.At(left+col, top+row)).(color.NRGBA) == gray {
 				x, y = left+col, top+row
@@ -397,30 +430,40 @@ func TestGameFontPNGCellNumbersAreReadOnly(t *testing.T) {
 		}
 	}
 	if x < 0 {
-		t.Fatal("slot 32 number is missing")
+		t.Fatal("cell 1 number is missing")
 	}
 	for _, check := range []struct {
 		name string
+		cell int
 		x, y int
 		c    color.NRGBA
 	}{
-		{"erase number pixel", x, y, color.NRGBA{}},
-		{"recolor number pixel", x, y, color.NRGBA{255, 255, 255, 255}},
-		{"partial label alpha", x, y, color.NRGBA{128, 128, 128, 254}},
-		{"add number pixel", left, top + 16, gray},
+		{"erase number pixel", 1, x, y, color.NRGBA{}},
+		{"recolor number pixel", 1, x, y, color.NRGBA{255, 255, 255, 255}},
+		{"partial label alpha", 1, x, y, color.NRGBA{160, 160, 160, 254}},
+		{"add number pixel", 1, left + 1, top + 13, gray},
+		{"erase frame corner", 1, left, top, color.NRGBA{}},
+		{"recolor frame corner", 1, left + gameFontCellSize - 1, top + gameFontCellSize - 1, gray},
+		{"change decoration background", 1, left + 1, top + 11, color.NRGBA{96, 96, 96, 255}},
+		{"last cell frame", 96, gameFontAtlasWidth - 1, gameFontAtlasHeight - 1, color.NRGBA{}},
 	} {
 		t.Run(check.name, func(t *testing.T) {
 			changed := editAtlasPNG(t, raw, func(img *image.NRGBA) { img.SetNRGBA(check.x, check.y, check.c) })
 			_, err := readGameFontPNG(changed, baseline)
-			if err == nil || !strings.Contains(err.Error(), "label") || !strings.Contains(err.Error(), "slot 32") {
-				t.Fatal("cell number edit must identify the read-only label and slot", err)
+			if err == nil || !strings.Contains(err.Error(), "frame/number") || !strings.Contains(err.Error(), "cell "+strconv.Itoa(check.cell)) {
+				t.Fatal("decoration edit must identify the read-only frame/number and cell", err)
 			}
 		})
 	}
 	precise := image.NewNRGBA64(img.Bounds())
 	draw.Draw(precise, precise.Bounds(), img, img.Bounds().Min, draw.Src)
-	precise.SetNRGBA64(x, y, color.NRGBA64{32895, 32896, 32896, 65535})
-	if _, err := readGameFontPNG(atlasPNGBytes(t, precise), baseline); err == nil || !strings.Contains(err.Error(), "label") {
-		t.Fatal("16-bit near-gray must not pass label validation", err)
+	precise.SetNRGBA64(x, y, color.NRGBA64{41119, 41120, 41120, 65535})
+	if _, err := readGameFontPNG(atlasPNGBytes(t, precise), baseline); err == nil || !strings.Contains(err.Error(), "frame/number") {
+		t.Fatal("16-bit near-gray must not pass number validation", err)
+	}
+	draw.Draw(precise, precise.Bounds(), img, img.Bounds().Min, draw.Src)
+	precise.SetNRGBA64(left, top, color.NRGBA64{24671, 24672, 24672, 65535})
+	if _, err := readGameFontPNG(atlasPNGBytes(t, precise), baseline); err == nil || !strings.Contains(err.Error(), "frame/number") {
+		t.Fatal("16-bit near-gray must not pass frame validation", err)
 	}
 }

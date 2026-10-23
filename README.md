@@ -24,11 +24,12 @@ gravedigger repack <output_dir> <repacked_dir>
 
 `repack` takes the edited assets and rebuilds game files ready to play. Keep the extracted `translatable/` and `meta/` directories together.
 
-The font atlas is a 512×192 PNG with 16 columns and 6 rows of numbered 32×32 cells.
-Draw in the top-left 16×10 area of each cell: white is the letter, black is its outline,
-and transparency is the background. Keep the grey numbers unchanged; they match the
-`slot` column on the `Шрифт` sheet. Change `symbol` only when assigning a different
-character to a cell. Cell 127 is reserved and marked `служебный` in the sheet.
+The font atlas is a 320×120 PNG with 16 columns and 6 rows of bordered 20×20 cells.
+Cells are numbered 1–96, with small numbers below the artwork. Draw in the 16×10 area
+one pixel inside the top-left border: white is the letter, black is its outline,
+and transparency is the background. Keep the frames and numbers unchanged; the numbers
+match the `number` column on the `Шрифт` sheet. Change `symbol` only when assigning
+a different character to a cell. Cell 96 is reserved and marked `служебный` in the sheet.
 
 Edited letters get their width from the rightmost drawn pixel, including the outline;
 left margins stay in place. The game allows widths up to 10 pixels and has a fixed

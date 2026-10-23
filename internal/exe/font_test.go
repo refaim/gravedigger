@@ -3,6 +3,7 @@ package exe
 import (
 	"bytes"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/xuri/excelize/v2"
@@ -110,6 +111,36 @@ func TestGameFontOrderDoesNotChangeNativeImage(t *testing.T) {
 	out := bytes.Clone(baseline)
 	if _, err := applyGameFont(out, f); err != nil || !bytes.Equal(out, baseline) {
 		t.Fatal("glyph order changed native font bytes", err)
+	}
+}
+
+func TestFontValidationUsesUserCellNumbers(t *testing.T) {
+	baseline := code(rawFixture(t))
+	good, err := readGameFont(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		change func(*GameFont)
+		cell   string
+	}{
+		{func(f *GameFont) { f.Glyphs[0].Unicode = "Я" }, "cell 1"},
+		{func(f *GameFont) { f.Glyphs[1].Unicode = "AB" }, "cell 2"},
+		{func(f *GameFont) { f.Glyphs[2].Width = 0 }, "cell 3"},
+		{func(f *GameFont) { f.Glyphs[1].Pixels[0] = 256 }, "cell 2"},
+		{func(f *GameFont) { f.Glyphs[95].Unicode = "Я" }, "cell 96"},
+	} {
+		f := cloneTestFont(good)
+		tc.change(&f)
+		_, err := applyGameFont(bytes.Clone(baseline), f)
+		if err == nil || !strings.Contains(err.Error(), tc.cell) || strings.Contains(err.Error(), "slot") || strings.Contains(err.Error(), "0x") {
+			t.Fatalf("expected user-facing %s, got %v", tc.cell, err)
+		}
+	}
+	bad := bytes.Clone(baseline)
+	bad[fontBase+0x202+32] = 0
+	if _, err := readGameFont(bad); err == nil || !strings.Contains(err.Error(), "cell 1") {
+		t.Fatal("native validation must also identify the same atlas cell", err)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -58,8 +59,11 @@ func TestFontAtlasExportRoundtrip(t *testing.T) {
 				t.Fatal("new export must not duplicate the PNG font in JSON")
 			}
 			img := atlasPicture(t, u)
-			if img.Bounds() != image.Rect(0, 0, gameFontAtlasWidth, gameFontAtlasHeight) {
+			if img.Bounds() != image.Rect(0, 0, 320, 120) {
 				t.Fatal("incorrect atlas dimensions", img.Bounds())
+			}
+			if img.NRGBAAt(0, 0) != (color.NRGBA{R: 96, G: 96, B: 96, A: 255}) {
+				t.Fatal("each cell requires an explicit visible border")
 			}
 			left, top := atlasCell(33)
 			for point, want := range map[image.Point]color.NRGBA{
@@ -80,8 +84,16 @@ func TestFontAtlasExportRoundtrip(t *testing.T) {
 					t.Fatal("font sheet requires all 96 numbered cells", err, len(rows))
 				}
 				space, _ := f.GetCellValue("Шрифт", "B2")
-				if space != " " || rows[0][0] != "slot" || rows[0][1] != "symbol" {
+				if space != " " || rows[0][0] != "number" || rows[0][1] != "symbol" {
 					t.Fatal("font sheet schema/space", rows[0], space)
+				}
+				for i, row := range rows[1:] {
+					if row[0] != strconv.Itoa(i+1) {
+						t.Fatal("font sheet must show user cell numbers 1..96", row)
+					}
+					if i < 95 && row[1] != string(rune(i+32)) {
+						t.Fatal("original game export must retain its original Latin character mapping", row)
+					}
 				}
 			})
 			out, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta)
