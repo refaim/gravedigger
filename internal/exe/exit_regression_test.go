@@ -1,0 +1,314 @@
+package exe
+
+import (
+	"bytes"
+	"encoding/hex"
+	"encoding/json"
+	"testing"
+)
+
+// The C runtime's sbrk starts at DS:009C, independently of the DOS block-size
+// constant at CS:006D. Native DOS snapshots showed stdout allocations replacing
+// the appended font and long strings when this initializer stayed at D65Ah.
+func TestAppendedAssetsAreOutsideInitialNearHeap(t *testing.T) {
+	for _, variant := range []string{"softdisk", "retail"} {
+		for _, fontEdit := range []bool{false, true} {
+			_, u := unpackFixture(t, variant)
+			if fontEdit {
+				x, _ := ParseXBIN(u.Translatable["exit_screen.xb"])
+				for i := range x.Font {
+					x.Font[i] ^= 0x5a
+				}
+				u.Translatable["exit_screen.xb"], _ = BuildXBIN(x)
+			} else {
+				setText(t, &u, "win_line13", "GRAVEDIGGER_NATIVE_LONG_TEXT_"+string(bytes.Repeat([]byte{'A'}, 1024))+"_END")
+			}
+			out, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta)
+			if err != nil {
+				t.Fatal(err)
+			}
+			image := code(out)
+			nearEnd := word(image, 0x6d)
+			if word(image, dsBase+0x9c) < nearEnd || word(image, dsBase+0x9a) < nearEnd {
+				t.Fatalf("%s font=%v: near-heap initializers %04X/%04X overlap static near bytes ending at %04X", variant, fontEdit, word(image, dsBase+0x9a), word(image, dsBase+0x9c), nearEnd)
+			}
+			if fontEdit {
+				stubAt := word(image, exitCallOffset+3)*16 + word(image, exitCallOffset+1)
+				fontAt := word(image, stubAt+16) * 16
+				if fontAt < dsBase+0x10000 {
+					t.Fatal("VGA font still consumes the game's near heap")
+				}
+				if nearEnd != 0xd65a {
+					t.Fatal("font-only edit changed the original near heap budget")
+				}
+				if image[0x9c] != 0xb8 || word(image, 0x9d) < (len(image)-dsBase+15)/16 {
+					t.Fatal("startup DOS/far-heap reserve does not retain far font/stub")
+				}
+			} else {
+				end := word(image, 0x11ce) + 1058
+				if nearEnd < end {
+					t.Fatal("long-only data overlaps near heap")
+				}
+			}
+			if word(image, 0xc8) != 0xd65a {
+				t.Fatal("reserving appended resources changed BSS clear end and would erase the resources")
+			}
+			if image[0x8c] != 0x75 {
+				t.Fatal("startup no longer retains its normal 64KiB DGROUP allocation")
+			}
+		}
+	}
+}
+
+const legacyStubHex = "b80300cd101e06565751b800a08ec0b800008ed831f6bac403b80001efb80204efb80406efb80003efbace03b80402efb80500efb80600effc31ffb9000151b90800f3a583c71059e2f4595f5e071f1e56b80300cd105e1fcb"
+
+func legacyFontEXE(t *testing.T) []byte {
+	t.Helper()
+	raw := rawFixture(t)
+	start := word(raw, 8) * 16
+	image := code(raw)
+	fontAt := (len(image) + 15) &^ 15
+	raw = append(raw, make([]byte, fontAt-len(image))...)
+	raw = append(raw, bundledExitFont...)
+	stubAt := fontAt + 4096
+	stub, err := hex.DecodeString(legacyStubHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putWord(stub, 16, fontAt/16)
+	raw = append(raw, stub...)
+	image = raw[start:]
+	image[exitCallOffset] = 0x9a
+	putWord(image, exitCallOffset+1, 0)
+	putWord(image, exitCallOffset+3, stubAt/16)
+	relocEnd := word(raw, 24) + word(raw, 6)*4
+	for i, field := range []int{exitCallOffset + 3, stubAt + 16} {
+		putWord(raw, relocEnd+i*4, field%16)
+		putWord(raw, relocEnd+i*4+2, field/16)
+	}
+	putWord(raw, 6, word(raw, 6)+2)
+	putWord(raw, 2, len(raw)%512)
+	putWord(raw, 4, (len(raw)+511)/512)
+	putWord(image, 0x6d, len(image)-dsBase)
+	image[0x8c] = 0xeb
+	return raw
+}
+
+func TestLegacyFontStubIsUpgradedOnEdit(t *testing.T) {
+	raw := legacyFontEXE(t)
+	h := ExeTextHandler{}
+	u, err := h.Unpack("DAVE.EXE", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	same, err := h.Repack(u.Manifest, u.Translatable, u.Meta)
+	if err != nil || !bytes.Equal(same, raw) {
+		t.Fatal("legacy no-edit roundtrip", err)
+	}
+	oldStub := word(code(raw), exitCallOffset+3) * 16
+	oldFont := word(code(raw), oldStub+16) * 16
+	x, _ := ParseXBIN(u.Translatable["exit_screen.xb"])
+	x.Font[0] ^= 0x5a
+	u.Translatable["exit_screen.xb"], _ = BuildXBIN(x)
+	out, err := h.Repack(u.Manifest, u.Translatable, u.Meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := code(out)
+	newStub := word(image, exitCallOffset+3)*16 + word(image, exitCallOffset+1)
+	newFont := word(image, newStub+16) * 16
+	if newStub <= oldStub || newFont < dsBase+0x10000 || word(out, 6) != word(raw, 6) || !bytes.Equal(image[newStub:newStub+len(buildFontStub(newFont/16))], buildFontStub(newFont/16)) {
+		t.Fatal("legacy edit did not migrate/retarget the corrected FAR stub with unchanged relocation count")
+	}
+	if !bytes.Equal(image[oldFont:oldFont+4096], bundledExitFont) {
+		t.Fatal("legacy on-disk font payload was overwritten")
+	}
+	newFontReloc := false
+	for i := 0; i < word(out, 6); i++ {
+		at := word(out, 24) + i*4
+		target := word(out, at) + word(out, at+2)*16
+		if target == oldStub+16 {
+			t.Fatal("old font-segment relocation still active")
+		}
+		if target == newStub+16 {
+			newFontReloc = true
+		}
+	}
+	if !newFontReloc {
+		t.Fatal("font-segment relocation was not moved")
+	}
+	// A malformed legacy executable cannot be upgraded if its loader relocation
+	// for the font segment is missing, even when the on-disk stub bytes match.
+	broken := bytes.Clone(raw)
+	last := word(broken, 24) + (word(broken, 6)-1)*4
+	putWord(broken, last, 0)
+	putWord(broken, last+2, 0)
+	bad := replaceOriginal(t, u, broken)
+	if _, err := h.Repack(bad.Manifest, bad.Translatable, bad.Meta); err == nil {
+		t.Fatal("upgraded legacy stub with missing font relocation")
+	}
+}
+
+func TestVGAFontStubDoesNotReloadROMFont(t *testing.T) {
+	stub := buildFontStub(0x1234)
+	if got := bytes.Count(stub, exitModeInstruction); got != 1 {
+		t.Fatalf("mode 3 is called %d times: a second BIOS mode-set replaces the freshly loaded font with ROM glyphs", got)
+	}
+	// Font RAM is enabled through these registers. Their original mode-3 values
+	// must be read and restored, rather than invoking BIOS mode-set a second time.
+	if !bytes.Contains(stub, []byte{0xec}) {
+		t.Fatal("stub does not read VGA state for restoration")
+	}
+}
+
+func TestReopenFARFontAndGrowNearText(t *testing.T) {
+	_, u := unpackFixture(t, "softdisk")
+	x, _ := ParseXBIN(u.Translatable["exit_screen.xb"])
+	x.Font[0] ^= 0x5a
+	u.Translatable["exit_screen.xb"], _ = BuildXBIN(x)
+	h := ExeTextHandler{}
+	out, err := h.Repack(u.Manifest, u.Translatable, u.Meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err = h.Unpack("DAVE.EXE", out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := "REOPEN_FAR_FONT_" + string(bytes.Repeat([]byte{'A'}, 1024))
+	setText(t, &u, "win_line13", marker)
+	out2, err := h.Repack(u.Manifest, u.Translatable, u.Meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := code(out2)
+	at := dsBase + word(c, 0x11ce)
+	if !bytes.Equal(c[at:at+len(marker)+1], append([]byte(marker), 0)) {
+		t.Fatal("near text not preserved when reopening FAR font")
+	}
+	font, _, err := exitFont(c)
+	if err != nil || !bytes.Equal(font, x.Font) {
+		t.Fatal("reopened FAR font changed", err)
+	}
+}
+
+func TestLegacyStubUpgradeForOtherEditableAssets(t *testing.T) {
+	for _, kind := range []string{"text", "text-no-font", "screen", "gamefont"} {
+		raw := legacyFontEXE(t)
+		h := ExeTextHandler{}
+		u, err := h.Unpack("DAVE.EXE", raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch kind {
+		case "text", "text-no-font":
+			setText(t, &u, "win_line13", "win")
+			if kind == "text-no-font" {
+				x, _ := ParseXBIN(u.Translatable["exit_screen.xb"])
+				x.Font = nil
+				u.Translatable["exit_screen.xb"], _ = BuildXBIN(x)
+			}
+		case "screen":
+			x, _ := ParseXBIN(u.Translatable["exit_screen.xb"])
+			x.Image[0] ^= 1
+			u.Translatable["exit_screen.xb"], _ = BuildXBIN(x)
+		case "gamefont":
+			var f GameFont
+			if err := json.Unmarshal(u.Translatable["game_font.json"], &f); err != nil {
+				t.Fatal(err)
+			}
+			f.Glyphs[1].Pixels[0] ^= 1
+			u.Translatable["game_font.json"], _ = json.Marshal(f)
+		}
+		out, err := h.Repack(u.Manifest, u.Translatable, u.Meta)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := code(out)
+		stubAt := word(c, exitCallOffset+3)*16 + word(c, exitCallOffset+1)
+		if word(c, stubAt+16)*16 < dsBase+0x10000 {
+			t.Fatalf("legacy %s edit left the broken near font/stub active", kind)
+		}
+	}
+}
+
+func TestNearMemoryManagerBudget(t *testing.T) {
+	for _, smallStack := range []bool{false, true} {
+		_, u := unpackFixture(t, "softdisk")
+		if smallStack {
+			raw := rawFixture(t)
+			putWord(code(raw), dsBase+0x4998, 0x200)
+			u = replaceOriginal(t, u, raw)
+		}
+		setText(t, &u, "win_line13", string(bytes.Repeat([]byte{'A'}, 3000)))
+		if _, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta); err == nil {
+			t.Fatalf("MM_Startup pool underflow budget accepted, smallStack=%v", smallStack)
+		}
+	}
+	_, u := unpackFixture(t, "softdisk")
+	raw := rawFixture(t)
+	putWord(code(raw), dsBase+0x4990, 1)
+	u = replaceOriginal(t, u, raw)
+	setText(t, &u, "win_line13", "win")
+	if _, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta); err == nil {
+		t.Fatal("unsupported CRT explicit heap accepted")
+	}
+}
+
+func TestFARLayoutValidation(t *testing.T) {
+	_, u := unpackFixture(t, "softdisk")
+	raw := rawFixture(t)
+	code(raw)[0x9c] = 0x90
+	bad := replaceOriginal(t, u, raw)
+	setText(t, &bad, "win_line13", "win")
+	if _, err := (ExeTextHandler{}).Repack(bad.Manifest, bad.Translatable, bad.Meta); err == nil {
+		t.Fatal("unknown far-heap initializer accepted")
+	}
+	duplicate := legacyFontEXE(t)
+	last := word(duplicate, 24) + (word(duplicate, 6)-1)*4
+	copy(duplicate[last-4:last], duplicate[last:last+4])
+	bad = replaceOriginal(t, u, duplicate)
+	x, _ := ParseXBIN(bad.Translatable["exit_screen.xb"])
+	x.Font[0] ^= 1
+	bad.Translatable["exit_screen.xb"], _ = BuildXBIN(x)
+	if _, err := (ExeTextHandler{}).Repack(bad.Manifest, bad.Translatable, bad.Meta); err == nil {
+		t.Fatal("duplicate legacy font relocation accepted")
+	}
+	far, err := patchExitFont(rawFixture(t), bundledExitFont)
+	if err != nil {
+		t.Fatal(err)
+	}
+	far = append(far, make([]byte, dsBase+0x100000)...)
+	if err := finishMZ(far, word(far, 8)*16, 0xd65a); err == nil {
+		t.Fatal("far resources outside real-mode space accepted")
+	}
+}
+
+func TestLegacyFontUpgradeCompactsLiveNearStrings(t *testing.T) {
+	raw := legacyFontEXE(t)
+	at := len(code(raw))
+	marker := "OLD_LEGACY_LONG_TEXT_" + string(bytes.Repeat([]byte{'A'}, 512))
+	putWord(code(raw), 0x11ce, at-dsBase)
+	raw = append(raw, append([]byte(marker), 0)...)
+	putWord(raw, 2, len(raw)%512)
+	putWord(raw, 4, (len(raw)+511)/512)
+	putWord(code(raw), 0x6d, len(code(raw))-dsBase)
+	h := ExeTextHandler{}
+	u, err := h.Unpack("DAVE.EXE", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setText(t, &u, "copyright", "Test")
+	out, err := h.Repack(u.Manifest, u.Translatable, u.Meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := code(out)
+	newAt := dsBase + word(c, 0x11ce)
+	if newAt >= at || !bytes.Equal(c[newAt:newAt+len(marker)+1], append([]byte(marker), 0)) {
+		t.Fatal("legacy live string was not compacted out of obsolete near font/stub")
+	}
+	if word(c, dsBase+0x9c) < newAt+len(marker)+1-dsBase {
+		t.Fatal("compacted legacy string overlaps near heap")
+	}
+}

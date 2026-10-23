@@ -1,0 +1,63 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - errorlint
+    - nilnesserr
+    - unused
+    - ineffassign
+    - exhaustive
+    - depguard
+    - nolintlint
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: false
+    nolintlint:
+      allow-unused: false
+      require-explanation: true
+      require-specific: true
+    depguard:
+      rules:
+        resource-handlers:
+          files:
+            - "**/internal/compression/*.go"
+            - "**/internal/compression/**/*.go"
+            - "**/internal/exe/*.go"
+            - "**/internal/exe/**/*.go"
+            - "**/internal/graphics/*.go"
+            - "**/internal/graphics/**/*.go"
+            - "**/internal/resource/*.go"
+            - "**/internal/resource/**/*.go"
+            - "!$test"
+          list-mode: strict
+          allow:
+            - "$gostd"
+            - "github.com/refaim/gravedigger/internal/"
+            - "github.com/xuri/excelize/v2"
+            - "golang.org/x/text/encoding/charmap$"
+          deny:
+            - pkg: "os$"
+              desc: "resource handlers consume bytes; keep host filesystem access in internal/app"
+            - pkg: "os/"
+              desc: "resource handlers consume bytes; keep host filesystem access in internal/app"
+            - pkg: "syscall$"
+              desc: "resource handlers must stay platform-independent"
+            - pkg: "syscall/"
+              desc: "resource handlers must stay platform-independent"
+            - pkg: "golang.org/x/sys"
+              desc: "resource handlers must stay platform-independent"
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      module-path: github.com/refaim/gravedigger
+    goimports:
+      local-prefixes:
+        - github.com/refaim/gravedigger

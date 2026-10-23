@@ -1,0 +1,39 @@
+# Gravedigger
+
+Go translation toolkit for Dangerous Dave in the Haunted Mansion.
+
+## Development
+
+- Source requires Go 1.25+; validation uses Go 1.27.3 and PowerShell 7.
+  Dependencies and the pinned gobco tool are in go.mod.
+- `.golangci.yml` uses the pre2 set of ten linters plus gofumpt/goimports,
+  pinned to golangci-lint 2.14.0. `scripts/check.ps1` enforces lint and format
+  checks; it accepts `-LintPath` or uses `.tools/golangci-lint/2.14.0/` or PATH.
+- Run `pwsh -NoProfile -File scripts/check.ps1` for formatting, vet, tests, exact
+  100% statement and branch coverage gates, a standalone build, and byte-exact
+  unpack/repack smoke tests of both game variants.
+- CI checks and packages Windows AMD64 (ZIP), Linux AMD64 (tar.gz), and macOS
+  ARM64 (tar.gz). Branch/PR checks do not publish releases. A `vX.Y.Z` tag must
+  match the built executable's version and belong to master history before
+  the three checked archives can be released.
+- The external corpus is required in `game/softdisk` and `game/retail`; CI downloads
+  the same two archives used by the Python predecessor.
+- Run `go run ./cmd/gravedigger --help` during development.
+- Build with `go build -o bin/gravedigger ./cmd/gravedigger` (use `.exe` on Windows).
+- `internal/app.Version` is the application version; current app version: 2.0.2.
+- Excelize handles XLSX; Afero provides filesystem access and failure testing.
+  The bundled VGA font is embedded in the Go binary.
+- Keep compatibility with previous `translatable/` and `meta/` output. Unchanged
+  EXEs roundtrip byte-exact; edited EXEs are rebuilt as decompressed MZ files.
+- `game_font.json` edits the game's fixed 96 slots and 10-row glyphs/shadows with
+  a custom Unicode mapping. It does not create Cyrillic artwork automatically.
+- DOS startup/error strings use CP866 through x/text/charmap, independently of
+  the game font. Select code page 866 in DOS when testing Cyrillic DOS messages.
+- Exit-screen XBIN supports custom 8×16 glyphs and text cells. Custom palettes
+  and the non-blinking background flag are currently not applied by the game.
+- Write a failing test before each feature/fix; keep 100% statements and branches.
+- On Windows, also run `scripts/test-exit-screen.ps1` with DOSBox Staging and
+  DOS-debug to verify the live exit screen, VGA font, and relocated text.
+  A separate reviewer must return zero comments before completing changes.
+- Temporary check artifacts are removed in `finally`; reusable Go caches remain
+  under `.cache/go`. Do not publish releases or push changes without authorization.
