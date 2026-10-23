@@ -20,13 +20,18 @@ Go translation toolkit for Dangerous Dave in the Haunted Mansion.
   the same two archives used by the Python predecessor.
 - Run `go run ./cmd/gravedigger --help` during development.
 - Build with `go build -o bin/gravedigger ./cmd/gravedigger` (use `.exe` on Windows).
-- `internal/app.Version` is the application version; current app version: 2.0.2.
+- `internal/app.Version` is the application version; current app version: 3.0.0.
 - Excelize handles XLSX; Afero provides filesystem access and failure testing.
   The bundled VGA font is embedded in the Go binary.
-- Keep compatibility with previous `translatable/` and `meta/` output. Unchanged
-  EXEs roundtrip byte-exact; edited EXEs are rebuilt as decompressed MZ files.
-- `game_font.json` edits the game's fixed 96 slots and 10-row glyphs/shadows with
-  a custom Unicode mapping. It does not create Cyrillic artwork automatically.
+- Preserve the `translatable/` and `meta/` layout. Unchanged EXEs roundtrip
+  byte-exact; edited EXEs are rebuilt as decompressed MZ files.
+- Fonts require `game_font.png` and the `Шрифт` sheet in `strings.xlsx`.
+  JSON font compatibility was explicitly removed at Roma's request.
+  The PNG is 512x192: 16x6 numbered 32x32 cells, each with a 16x10 drawing area
+  at the top left and fixed grey slot numbers below. White is foreground+mask,
+  black is mask-only, cyan is foreground-only, and transparency clears both.
+  Changed glyphs use automatic width (at most 10); unchanged or empty glyphs
+  retain their advance. Slot 127 is reserved and must remain unchanged.
 - DOS startup/error strings use CP866 through x/text/charmap, independently of
   the game font. Select code page 866 in DOS when testing Cyrillic DOS messages.
 - Exit-screen XBIN supports custom 8×16 glyphs and text cells. Custom palettes

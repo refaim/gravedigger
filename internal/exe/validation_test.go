@@ -171,7 +171,7 @@ func TestLocalBufferStringLimit(t *testing.T) {
 	}
 }
 
-func TestLegacyManifestAndNoFont(t *testing.T) {
+func TestPartialManifestAndNoExitFont(t *testing.T) {
 	original, u := unpackFixture(t, "softdisk")
 	var m exeMetadata
 	if err := json.Unmarshal(u.Manifest.Metadata, &m); err != nil {
@@ -185,7 +185,11 @@ func TestLegacyManifestAndNoFont(t *testing.T) {
 		selected = append(selected, StringRow{ID: e.ID, Text: rows[e.ID]})
 	}
 	u.Translatable["strings.xlsx"], _ = writeStrings(selected)
-	delete(u.Translatable, "game_font.json")
+	f, err := readGameFont(code(rawFixture(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Translatable["strings.xlsx"], _ = addFontSheet(u.Translatable["strings.xlsx"], f)
 	x, _ := ParseXBIN(u.Translatable["exit_screen.xb"])
 	x.Font = nil
 	u.Translatable["exit_screen.xb"], _ = BuildXBIN(x)

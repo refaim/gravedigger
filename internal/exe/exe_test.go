@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"image/color"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xuri/excelize/v2"
 
 	"github.com/refaim/gravedigger/internal/compression"
 	"github.com/refaim/gravedigger/internal/resource"
@@ -38,20 +41,30 @@ func unpackFixture(t *testing.T, variant string) ([]byte, resource.Unpacked) {
 
 func setText(t *testing.T, u *resource.Unpacked, id, text string) {
 	t.Helper()
-	rows, err := readStrings(u.Translatable["strings.xlsx"])
+	f, err := excelize.OpenReader(bytes.NewReader(u.Translatable["strings.xlsx"]))
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows[id] = text
-	var out []StringRow
-	for id, text := range rows {
-		out = append(out, StringRow{ID: id, Text: text})
-	}
-	b, err := writeStrings(out)
+	defer func() { _ = f.Close() }()
+	rows, err := f.GetRows("strings")
 	if err != nil {
 		t.Fatal(err)
 	}
-	u.Translatable["strings.xlsx"] = b
+	for i, row := range rows {
+		if len(row) > 0 && row[0] == id {
+			cell, _ := excelize.CoordinatesToCellName(2, i+1)
+			if err := f.SetCellStr("strings", cell, text); err != nil {
+				t.Fatal(err)
+			}
+			b, err := f.WriteToBuffer()
+			if err != nil {
+				t.Fatal(err)
+			}
+			u.Translatable["strings.xlsx"] = b.Bytes()
+			return
+		}
+	}
+	t.Fatalf("missing string id %s", id)
 }
 func word(b []byte, p int) int   { return int(binary.LittleEndian.Uint16(b[p:])) }
 func putWord(b []byte, p, v int) { binary.LittleEndian.PutUint16(b[p:], uint16(v)) }
@@ -84,8 +97,12 @@ func TestEXEOriginalsAndTable(t *testing.T) {
 			if !bytes.Equal(out, original) {
 				t.Fatal("unchanged EXE is not byte exact")
 			}
-			var f GameFont
-			if err := json.Unmarshal(u.Translatable["game_font.json"], &f); err != nil {
+			data, start, err := decodeOriginal(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f, err := readGameFont(data[start:])
+			if err != nil {
 				t.Fatal(err)
 			}
 			if f.Height != 10 || len(f.Glyphs) != 96 || len(f.Glyphs[0].Pixels) != 10 || len(f.Glyphs[0].Shadow) != 10 {
@@ -197,14 +214,20 @@ func TestCyrillicAndGameFontRoundtrip(t *testing.T) {
 			t.Fatal(err)
 		}
 		baseline := code(raw)
-		var f GameFont
-		if err := json.Unmarshal(u.Translatable["game_font.json"], &f); err != nil {
-			t.Fatal(err)
+		img := atlasPicture(t, u)
+		left, top := atlasCell(126)
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(left+x, top+2, color.NRGBA{})
 		}
-		f.Glyphs[94].Unicode = "Я"
-		f.Glyphs[94].Pixels[2] = 0xff00
-		b, _ := json.Marshal(f)
-		u.Translatable["game_font.json"] = b
+		for _, x := range []int{8, 9} {
+			img.SetNRGBA(left+x, top+2, color.NRGBA{G: 255, B: 255, A: 255})
+		}
+		storeAtlas(t, &u, img)
+		atlasWorkbook(t, &u, func(f *excelize.File) {
+			if err := f.SetCellStr("Шрифт", "B96", "Я"); err != nil {
+				t.Fatal(err)
+			}
+		})
 		setText(t, &u, "win_line13", "ЯЯ")
 		out, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta)
 		if err != nil {
@@ -217,7 +240,7 @@ func TestCyrillicAndGameFontRoundtrip(t *testing.T) {
 		if !bytes.Equal(c[exitScreenOffset:exitScreenOffset+4000], baseline[exitScreenOffset:exitScreenOffset+4000]) {
 			t.Fatal("font damaged exit screen")
 		}
-		if word(c, fontBase+2+0x7e*2) != 0xbea || word(c, fontBase+0xbea+20+4) != 0xff00 {
+		if word(c, fontBase+2+0x7e*2) != 0xbea || word(c, fontBase+0xbea+20+4) != 0xc000 {
 			t.Fatal("glyph mapping/record layout wrong")
 		}
 		if _, err := (ExeTextHandler{}).Unpack("DAVE.EXE", out); err != nil {

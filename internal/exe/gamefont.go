@@ -16,17 +16,17 @@ const (
 // Each record contains ten shadow rows followed by ten foreground rows. Rows
 // are native bit masks: eight bits for widths <=8, sixteen bits for wider glyphs.
 type GameFont struct {
-	Version int         `json:"version"`
-	Height  int         `json:"height"`
-	Glyphs  []GameGlyph `json:"glyphs"`
+	Version int
+	Height  int
+	Glyphs  []GameGlyph
 }
 
 type GameGlyph struct {
-	Slot    int      `json:"slot"`
-	Unicode string   `json:"unicode"`
-	Width   int      `json:"width"`
-	Pixels  []uint16 `json:"pixels"`
-	Shadow  []uint16 `json:"shadow"`
+	Slot    int
+	Unicode string
+	Width   int
+	Pixels  []uint16
+	Shadow  []uint16
 }
 
 func readGameFont(image []byte) (GameFont, error) {
@@ -60,7 +60,7 @@ func readGameFont(image []byte) (GameFont, error) {
 
 func applyGameFont(image []byte, f GameFont) (map[rune]byte, error) {
 	if f.Version != 1 || f.Height != 10 || len(f.Glyphs) != 96 {
-		return nil, fmt.Errorf("game_font.json requires version 1, height 10, and 96 glyphs")
+		return nil, fmt.Errorf("game font requires version 1, height 10, and 96 glyphs")
 	}
 	mapping := make(map[rune]byte, 96)
 	slots := make(map[int]bool, 96)

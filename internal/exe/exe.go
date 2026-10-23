@@ -121,10 +121,12 @@ func (h ExeTextHandler) Unpack(name string, original []byte) (resource.Unpacked,
 	if err != nil {
 		return out, err
 	}
-	fontJSON, _ := json.MarshalIndent(gameFont, "", "  ")
+	// This workbook was just generated with fixed sheet/cell names; adding the
+	// validated font mapping has no user-controlled serialization failure path.
+	xlsx, _ = addFontSheet(xlsx, gameFont)
 	metadata, _ := json.Marshal(exeMetadata{OriginalEXE: original, Strings: entries})
 	out.Manifest = resource.Manifest{Handler: h.Name(), SourceFile: name, Metadata: metadata}
-	out.Translatable = resource.Assets{"strings.xlsx": xlsx, "exit_screen.xb": xbin, "game_font.json": fontJSON}
+	out.Translatable = resource.Assets{"strings.xlsx": xlsx, "exit_screen.xb": xbin, "game_font.png": gameFontPNG(gameFont)}
 	out.Meta = resource.Assets{}
 	return out, nil
 }
@@ -199,11 +201,12 @@ func (h ExeTextHandler) Repack(manifest resource.Manifest, assets, meta resource
 	if err != nil {
 		return nil, err
 	}
-	if raw, ok := assets["game_font.json"]; ok {
-		f = GameFont{}
-		if err := json.Unmarshal(raw, &f); err != nil {
-			return nil, fmt.Errorf("game_font.json: %w", err)
-		}
+	f, err = readGameFontPNG(assets["game_font.png"], f)
+	if err != nil {
+		return nil, err
+	}
+	if err := readFontSheet(assets["strings.xlsx"], &f); err != nil {
+		return nil, err
 	}
 	mapping, err := applyGameFont(image, f)
 	if err != nil {
