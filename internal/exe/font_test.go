@@ -2,14 +2,34 @@ package exe
 
 import (
 	"bytes"
-	"encoding/json"
+	"slices"
+	"strings"
 	"testing"
+
+	"github.com/xuri/excelize/v2"
 )
 
+func mapClone(m map[string][]byte) map[string][]byte {
+	out := map[string][]byte{}
+	for k, v := range m {
+		out[k] = bytes.Clone(v)
+	}
+	return out
+}
+
+func cloneTestFont(f GameFont) GameFont {
+	f.Glyphs = slices.Clone(f.Glyphs)
+	for i := range f.Glyphs {
+		f.Glyphs[i].Pixels = slices.Clone(f.Glyphs[i].Pixels)
+		f.Glyphs[i].Shadow = slices.Clone(f.Glyphs[i].Shadow)
+	}
+	return f
+}
+
 func TestGameFontValidation(t *testing.T) {
-	_, u := unpackFixture(t, "softdisk")
-	var good GameFont
-	if err := json.Unmarshal(u.Translatable["game_font.json"], &good); err != nil {
+	baseline := code(rawFixture(t))
+	good, err := readGameFont(baseline)
+	if err != nil {
 		t.Fatal(err)
 	}
 	for _, change := range []func(*GameFont){
@@ -27,30 +47,22 @@ func TestGameFontValidation(t *testing.T) {
 			}
 		},
 	} {
-		var f GameFont
-		b, _ := json.Marshal(good)
-		if err := json.Unmarshal(b, &f); err != nil {
+		f := cloneTestFont(good)
+		change(&f)
+		if _, err := applyGameFont(bytes.Clone(baseline), f); err == nil {
+			t.Fatal("accepted invalid game font")
+		}
+	}
+	_, u := unpackFixture(t, "softdisk")
+	atlasWorkbook(t, &u, func(f *excelize.File) {
+		if err := f.SetCellStr("Шрифт", "B35", "Я"); err != nil {
 			t.Fatal(err)
 		}
-		change(&f)
-		b, _ = json.Marshal(f)
-		assets := mapClone(u.Translatable)
-		assets["game_font.json"] = b
-		if _, err := (ExeTextHandler{}).Repack(u.Manifest, assets, u.Meta); err == nil {
-			t.Fatal("accepted invalid gamefont")
-		}
+	})
+	if _, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta); err == nil {
+		t.Fatal("ASCII A removed while English strings still use it")
 	}
-	assets := mapClone(u.Translatable)
-	assets["game_font.json"] = []byte("bad")
-	if _, err := (ExeTextHandler{}).Repack(u.Manifest, assets, u.Meta); err == nil {
-		t.Fatal("accepted malformed JSON")
-	}
-	good.Glyphs['A'-32].Unicode = "Я"
-	b, _ := json.Marshal(good)
-	assets["game_font.json"] = b
-	if _, err := (ExeTextHandler{}).Repack(u.Manifest, assets, u.Meta); err == nil {
-		t.Fatal("ASCII glyph removed while English strings still use it")
-	}
+	_, u = unpackFixture(t, "softdisk")
 	setText(t, &u, "win_line13", "Я")
 	if _, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta); err == nil {
 		t.Fatal("missing Unicode mapping accepted")
@@ -58,50 +70,28 @@ func TestGameFontValidation(t *testing.T) {
 }
 
 func TestDynamicDigitMappingCannotBeMoved(t *testing.T) {
-	_, u := unpackFixture(t, "softdisk")
-	var f GameFont
-	if err := json.Unmarshal(u.Translatable["game_font.json"], &f); err != nil {
+	baseline := code(rawFixture(t))
+	f, err := readGameFont(baseline)
+	if err != nil {
 		t.Fatal(err)
 	}
 	f.Glyphs['0'-32].Unicode = "Я"
 	f.Glyphs['~'-32].Unicode = "0"
-	b, _ := json.Marshal(f)
-	u.Translatable["game_font.json"] = b
-	if _, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta); err == nil {
+	if _, err := applyGameFont(baseline, f); err == nil {
 		t.Fatal("moved dynamic digit mapping accepted")
 	}
 }
 
 func TestFixedCursorMapping(t *testing.T) {
-	_, u := unpackFixture(t, "softdisk")
-	var f GameFont
-	if err := json.Unmarshal(u.Translatable["game_font.json"], &f); err != nil {
+	baseline := code(rawFixture(t))
+	f, err := readGameFont(baseline)
+	if err != nil {
 		t.Fatal(err)
 	}
 	f.Glyphs['_'-32].Unicode = "Я"
-	b, _ := json.Marshal(f)
-	u.Translatable["game_font.json"] = b
-	if _, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta); err == nil {
+	if _, err := applyGameFont(baseline, f); err == nil {
 		t.Fatal("hardcoded underscore cursor remapped")
 	}
-}
-
-func TestIncompleteFontJSON(t *testing.T) {
-	for _, body := range []string{"{}", "null"} {
-		_, u := unpackFixture(t, "softdisk")
-		u.Translatable["game_font.json"] = []byte(body)
-		if _, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta); err == nil {
-			t.Fatal("missing font properties accepted")
-		}
-	}
-}
-
-func mapClone(m map[string][]byte) map[string][]byte {
-	out := map[string][]byte{}
-	for k, v := range m {
-		out[k] = bytes.Clone(v)
-	}
-	return out
 }
 
 func TestBuildFontStub(t *testing.T) {
@@ -111,32 +101,56 @@ func TestBuildFontStub(t *testing.T) {
 	}
 }
 
-func TestGameFontOrderDoesNotChangeExecutable(t *testing.T) {
-	original, u := unpackFixture(t, "softdisk")
-	var f GameFont
-	if err := json.Unmarshal(u.Translatable["game_font.json"], &f); err != nil {
+func TestGameFontOrderDoesNotChangeNativeImage(t *testing.T) {
+	baseline := code(rawFixture(t))
+	f, err := readGameFont(baseline)
+	if err != nil {
 		t.Fatal(err)
 	}
-	for i, j := 0, len(f.Glyphs)-1; i < j; i, j = i+1, j-1 {
-		f.Glyphs[i], f.Glyphs[j] = f.Glyphs[j], f.Glyphs[i]
+	slices.Reverse(f.Glyphs)
+	out := bytes.Clone(baseline)
+	if _, err := applyGameFont(out, f); err != nil || !bytes.Equal(out, baseline) {
+		t.Fatal("glyph order changed native font bytes", err)
 	}
-	b, _ := json.Marshal(f)
-	u.Translatable["game_font.json"] = b
-	out, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta)
-	if err != nil || !bytes.Equal(original, out) {
-		t.Fatal("JSON glyph order changed executable", err)
+}
+
+func TestFontValidationUsesUserCellNumbers(t *testing.T) {
+	baseline := code(rawFixture(t))
+	good, err := readGameFont(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		change func(*GameFont)
+		cell   string
+	}{
+		{func(f *GameFont) { f.Glyphs[0].Unicode = "Я" }, "cell 1"},
+		{func(f *GameFont) { f.Glyphs[1].Unicode = "AB" }, "cell 2"},
+		{func(f *GameFont) { f.Glyphs[2].Width = 0 }, "cell 3"},
+		{func(f *GameFont) { f.Glyphs[1].Pixels[0] = 256 }, "cell 2"},
+		{func(f *GameFont) { f.Glyphs[95].Unicode = "Я" }, "cell 96"},
+	} {
+		f := cloneTestFont(good)
+		tc.change(&f)
+		_, err := applyGameFont(bytes.Clone(baseline), f)
+		if err == nil || !strings.Contains(err.Error(), tc.cell) || strings.Contains(err.Error(), "slot") || strings.Contains(err.Error(), "0x") {
+			t.Fatalf("expected user-facing %s, got %v", tc.cell, err)
+		}
+	}
+	bad := bytes.Clone(baseline)
+	bad[fontBase+0x202+32] = 0
+	if _, err := readGameFont(bad); err == nil || !strings.Contains(err.Error(), "cell 1") {
+		t.Fatal("native validation must also identify the same atlas cell", err)
 	}
 }
 
 func TestDOSStringEncodingIndependentOfGameFont(t *testing.T) {
 	_, u := unpackFixture(t, "softdisk")
-	var f GameFont
-	if err := json.Unmarshal(u.Translatable["game_font.json"], &f); err != nil {
-		t.Fatal(err)
-	}
-	f.Glyphs[94].Unicode = "🙂"
-	b, _ := json.Marshal(f)
-	u.Translatable["game_font.json"] = b
+	atlasWorkbook(t, &u, func(f *excelize.File) {
+		if err := f.SetCellStr("Шрифт", "B96", "🙂"); err != nil {
+			t.Fatal(err)
+		}
+	})
 	setText(t, &u, "startup_executing", "🙂")
 	if _, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta); err == nil {
 		t.Fatal("DOS string accepted game-font-only Unicode")
@@ -144,10 +158,10 @@ func TestDOSStringEncodingIndependentOfGameFont(t *testing.T) {
 	setText(t, &u, "startup_executing", "~ASCII~")
 	out, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta)
 	if err != nil {
-		t.Fatal("ASCII DOS text should not use gamefont remapping", err)
+		t.Fatal("ASCII DOS text should not use game font mapping", err)
 	}
 	if !bytes.HasPrefix(code(out)[0x276c2:], []byte("~ASCII~\x00")) {
-		t.Fatal("DOS bytes changed by gamefont mapping")
+		t.Fatal("DOS bytes changed by game font mapping")
 	}
 	for _, id := range []string{"startup_executing", "tile_error", "ted_exit", "bad_react", "object_overflow", "huff_error", "rlew_error", "bload_error"} {
 		if !isDOSString(id) {

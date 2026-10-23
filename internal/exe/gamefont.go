@@ -16,17 +16,17 @@ const (
 // Each record contains ten shadow rows followed by ten foreground rows. Rows
 // are native bit masks: eight bits for widths <=8, sixteen bits for wider glyphs.
 type GameFont struct {
-	Version int         `json:"version"`
-	Height  int         `json:"height"`
-	Glyphs  []GameGlyph `json:"glyphs"`
+	Version int
+	Height  int
+	Glyphs  []GameGlyph
 }
 
 type GameGlyph struct {
-	Slot    int      `json:"slot"`
-	Unicode string   `json:"unicode"`
-	Width   int      `json:"width"`
-	Pixels  []uint16 `json:"pixels"`
-	Shadow  []uint16 `json:"shadow"`
+	Slot    int
+	Unicode string
+	Width   int
+	Pixels  []uint16
+	Shadow  []uint16
 }
 
 func readGameFont(image []byte) (GameFont, error) {
@@ -40,7 +40,7 @@ func readGameFont(image []byte) (GameFont, error) {
 		rowBytes := (width + 7) / 8
 		offset := fontBase + wordAt(image, fontBase+2+slot*2)
 		if width < 1 || width > 10 || offset != expectedOffset || offset+20*rowBytes > fontRecords+fontCapacity {
-			return f, fmt.Errorf("invalid game font record for slot %d", slot)
+			return f, fmt.Errorf("invalid game font record for cell %d", slot-31)
 		}
 		glyph := GameGlyph{Slot: slot, Unicode: string(rune(slot)), Width: width, Pixels: make([]uint16, 10), Shadow: make([]uint16, 10)}
 		for plane, rows := range [][]uint16{glyph.Shadow, glyph.Pixels} {
@@ -60,14 +60,14 @@ func readGameFont(image []byte) (GameFont, error) {
 
 func applyGameFont(image []byte, f GameFont) (map[rune]byte, error) {
 	if f.Version != 1 || f.Height != 10 || len(f.Glyphs) != 96 {
-		return nil, fmt.Errorf("game_font.json requires version 1, height 10, and 96 glyphs")
+		return nil, fmt.Errorf("game font requires version 1, height 10, and 96 glyphs")
 	}
 	mapping := make(map[rune]byte, 96)
 	slots := make(map[int]bool, 96)
 	ordered := make([]GameGlyph, 96)
 	for _, g := range f.Glyphs {
 		if g.Slot < 32 || g.Slot > 127 || slots[g.Slot] {
-			return nil, fmt.Errorf("invalid or duplicate game glyph slot %d", g.Slot)
+			return nil, fmt.Errorf("invalid or duplicate game font record")
 		}
 		slots[g.Slot] = true
 		ordered[g.Slot-32] = g
@@ -75,21 +75,21 @@ func applyGameFont(image []byte, f GameFont) (map[rune]byte, error) {
 	offset := fontRecords
 	for _, g := range ordered {
 		if (g.Slot == 32 || g.Slot == '_' || (g.Slot >= '0' && g.Slot <= '9')) && g.Unicode != string(rune(g.Slot)) {
-			return nil, fmt.Errorf("slot 0x%02X is reserved for the game's space/dynamic ASCII digits/underscore cursor; edit its bitmap without changing its Unicode mapping", g.Slot)
+			return nil, fmt.Errorf("cell %d is reserved for its original space/digit/underscore symbol; edit its bitmap without changing its symbol", g.Slot-31)
 		}
 		if g.Slot == 127 && g.Unicode != "\x7f" {
-			return nil, fmt.Errorf("game slot 0x7F is a color-control escape and cannot be remapped")
+			return nil, fmt.Errorf("cell 96 is reserved for control data and cannot be assigned a character")
 		}
 		r, size := utf8.DecodeRuneInString(g.Unicode)
 		if size != len(g.Unicode) || size == 0 || r < 32 || r == utf8.RuneError {
-			return nil, fmt.Errorf("slot %d requires one printable Unicode character", g.Slot)
+			return nil, fmt.Errorf("cell %d requires one printable Unicode character", g.Slot-31)
 		}
 		if _, exists := mapping[r]; exists {
 			return nil, fmt.Errorf("duplicate Unicode mapping %q", r)
 		}
 		mapping[r] = byte(g.Slot)
 		if g.Width < 1 || g.Width > 10 || len(g.Pixels) != 10 || len(g.Shadow) != 10 {
-			return nil, fmt.Errorf("invalid geometry for game glyph %d", g.Slot)
+			return nil, fmt.Errorf("invalid geometry for game font cell %d", g.Slot-31)
 		}
 		rowBytes := (g.Width + 7) / 8
 		if offset+20*rowBytes > fontRecords+fontCapacity {
@@ -101,7 +101,7 @@ func applyGameFont(image []byte, f GameFont) (map[rune]byte, error) {
 			for _, value := range rows {
 				if rowBytes == 1 {
 					if value > 255 {
-						return nil, fmt.Errorf("8-bit row overflow for slot %d", g.Slot)
+						return nil, fmt.Errorf("bitmap row overflow for cell %d", g.Slot-31)
 					}
 					image[offset] = byte(value)
 				} else {

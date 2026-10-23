@@ -3,7 +3,7 @@ package exe
 import (
 	"bytes"
 	"encoding/hex"
-	"encoding/json"
+	"image/color"
 	"testing"
 )
 
@@ -213,12 +213,10 @@ func TestLegacyStubUpgradeForOtherEditableAssets(t *testing.T) {
 			x.Image[0] ^= 1
 			u.Translatable["exit_screen.xb"], _ = BuildXBIN(x)
 		case "gamefont":
-			var f GameFont
-			if err := json.Unmarshal(u.Translatable["game_font.json"], &f); err != nil {
-				t.Fatal(err)
-			}
-			f.Glyphs[1].Pixels[0] ^= 1
-			u.Translatable["game_font.json"], _ = json.Marshal(f)
+			img := atlasPicture(t, u)
+			left, top := atlasCell(33)
+			img.SetNRGBA(left+1, top, color.NRGBA{R: 255, G: 255, B: 255, A: 255})
+			storeAtlas(t, &u, img)
 		}
 		out, err := h.Repack(u.Manifest, u.Translatable, u.Meta)
 		if err != nil {
