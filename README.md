@@ -1,14 +1,14 @@
 # Gravedigger
 
-Translation toolkit for **Dangerous Dave in the Haunted Mansion** (DOS, 1991).
+Go translation toolkit for **Dangerous Dave in the Haunted Mansion** (DOS, 1991).
 
-Extracts translatable resources (text strings) from the game into editable formats and repacks them back into working game files, enabling fan translations into any language.
+Extracts translatable resources from the game into editable formats and repacks them into working game files, enabling fan translations.
 
-Supports arbitrary-length replacement strings — translated text is not limited to the original string length. When a string exceeds its original slot, all strings are relocated to an appended block with patched cross-references.
+Supports longer replacement strings by relocating text and patching cross-references, subject to the game's buffer limits.
 
 ## Usage
 
-```
+```text
 gravedigger unpack <game_dir> <output_dir>
 gravedigger repack <output_dir> <repacked_dir>
 ```
@@ -17,29 +17,24 @@ gravedigger repack <output_dir> <repacked_dir>
 
 | Resource | Format | Notes |
 |---|---|---|
-| Text strings (menus, messages, win/lose screens) | XLSX | One row per string; translated text can exceed the original length |
-| Sprites and tiles | PNG | Indexed-color images with original palette |
-| Anti-piracy exit screen (80×25 VGA text mode) | [XBIN](https://web.archive.org/web/20120204063040/http://www.acid.org/info/xbin/x_spec.htm) | Can be edited in [Moebius](https://github.com/blocktronics/moebius), a free ANSI/XBIN art editor |
+| Text strings (menus, messages, win/lose screens) | XLSX | Edit the `text` column and keep `id`; translated text can exceed the original length |
+| Pictures and sprites | PNG | Keep the original dimensions and EGA palette |
+| Game font | JSON | `game_font.json` contains character mappings and editable glyphs |
+| Anti-piracy exit screen (80×25 VGA text mode) | [XBIN](https://web.archive.org/web/20120204063040/http://www.acid.org/info/xbin/x_spec.htm) | Edit text and the VGA font in [Moebius](https://github.com/blocktronics/moebius), a free ANSI/XBIN art editor |
 
-`repack` takes the edited translations and rebuilds game files ready to play.
+`repack` takes the edited assets and rebuilds game files ready to play. Keep the extracted `translatable/` and `meta/` directories together.
+
+Output directories must be empty and must not overlap their input directories.
+For Cyrillic DOS startup and error messages, select code page 866 in DOS.
 
 ## Installation
 
 Download a standalone binary from [GitHub Releases](../../releases).
 
-Or run from source (Python 3.13+):
+Or run from source (Go 1.25+):
 
-```
-uv sync
-uv run gravedigger --help
-```
-
-## Development
-
-```
-make lint    # ruff + mypy
-make test    # pytest (100% coverage required)
-make build   # standalone binary via nuitka
+```sh
+go run ./cmd/gravedigger --help
 ```
 
 ## Acknowledgements
