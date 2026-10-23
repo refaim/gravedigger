@@ -109,7 +109,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           go install gotest.tools/gotestsum@v1.13.0
           if ($LASTEXITCODE -ne 0) { throw 'Installing gotestsum failed.' }
-          gotestsum --junitfile junit.xml -- -covermode=atomic -coverprofile=coverage.out ./...
+          gotestsum --junitfile junit.xml -- -covermode=atomic '-coverprofile=coverage.out' ./...
           if ($LASTEXITCODE -ne 0) { throw 'Tests for the coverage and JUnit reports failed.' }
 
       - name: Upload coverage to Codecov
