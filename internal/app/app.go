@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	Version = "3.0.1"
+	Version = "4.0.0"
 	usage   = "gravedigger — Dangerous Dave in the Haunted Mansion translation toolkit\nUsage: gravedigger unpack <game_dir> <output_dir>\n       gravedigger repack <editable_dir> <output_dir>\n"
 )
 

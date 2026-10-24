@@ -46,14 +46,14 @@ func setText(t *testing.T, u *resource.Unpacked, id, text string) {
 		t.Fatal(err)
 	}
 	defer func() { _ = f.Close() }()
-	rows, err := f.GetRows("strings")
-	if err != nil {
+	var m exeMetadata
+	if err := json.Unmarshal(u.Manifest.Metadata, &m); err != nil {
 		t.Fatal(err)
 	}
-	for i, row := range rows {
-		if len(row) > 0 && row[0] == id {
-			cell, _ := excelize.CoordinatesToCellName(2, i+1)
-			if err := f.SetCellStr("strings", cell, text); err != nil {
+	for i, row := range m.Strings {
+		if row.ID == id {
+			cell, _ := excelize.CoordinatesToCellName(3, i+2)
+			if err := f.SetCellStr("Тексты", cell, text); err != nil {
 				t.Fatal(err)
 			}
 			b, err := f.WriteToBuffer()
@@ -66,6 +66,28 @@ func setText(t *testing.T, u *resource.Unpacked, id, text string) {
 	}
 	t.Fatalf("missing string id %s", id)
 }
+
+func readUnpackedStrings(t *testing.T, u resource.Unpacked) (map[string]string, error) {
+	t.Helper()
+	var m exeMetadata
+	if err := json.Unmarshal(u.Manifest.Metadata, &m); err != nil {
+		t.Fatal(err)
+	}
+	data, start, err := decodeOriginal(m.OriginalEXE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, texts, err := inspectStrings(data[start:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := make([]StringRow, 0, len(m.Strings))
+	for _, entry := range m.Strings {
+		expected = append(expected, StringRow{ID: entry.ID, Text: strings.TrimRight(texts[entry.ID], "\n")})
+	}
+	return readStrings(u.Translatable["strings.xlsx"], expected)
+}
+
 func word(b []byte, p int) int   { return int(binary.LittleEndian.Uint16(b[p:])) }
 func putWord(b []byte, p, v int) { binary.LittleEndian.PutUint16(b[p:], uint16(v)) }
 func code(b []byte) []byte       { return b[word(b, 8)*16:] }
@@ -78,7 +100,7 @@ func TestEXEOriginalsAndTable(t *testing.T) {
 	for _, variant := range []string{"softdisk", "retail"} {
 		t.Run(variant, func(t *testing.T) {
 			original, u := unpackFixture(t, variant)
-			rows, err := readStrings(u.Translatable["strings.xlsx"])
+			rows, err := readUnpackedStrings(t, u)
 			if err != nil {
 				t.Fatal(err)
 			}

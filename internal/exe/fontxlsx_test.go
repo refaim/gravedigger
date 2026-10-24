@@ -79,7 +79,7 @@ func TestFontSheetRoundtrip(t *testing.T) {
 	if !reflect.DeepEqual(got, before) {
 		t.Fatal("no-op changed font geometry or mappings")
 	}
-	values, err := readStrings(raw)
+	values, err := readStrings(raw, []StringRow{{ID: "title", Text: "=Привет"}, {ID: "empty"}})
 	if err != nil || values["title"] != "=Привет" || values["empty"] != "" {
 		t.Fatalf("strings changed: %v, %v", values, err)
 	}

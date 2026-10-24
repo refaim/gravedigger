@@ -56,7 +56,7 @@ func readFontSheet(raw []byte, font *GameFont) error {
 	defer func() { _ = f.Close() }() // Reader owns only the supplied in-memory XLSX bytes.
 	rows, err := f.GetRows(fontSheetName, excelize.Options{RawCellValue: true})
 	if err != nil {
-		return fmt.Errorf("strings.xlsx sheet %s: %w", fontSheetName, err)
+		return fmt.Errorf("strings.xlsx sheet %s: %w; preserve this sheet when replacing SP text columns", fontSheetName, err)
 	}
 	for i, row := range rows {
 		if len(row) > 2 {

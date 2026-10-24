@@ -21,17 +21,48 @@ function Set-XlsxText([string]$Path, [string]$Id, [string]$Text, [switch]$Change
         $ns = [Xml.XmlNamespaceManager]::new($strings.NameTable)
         $ns.AddNamespace('s', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main')
         $items = $strings.SelectNodes('/s:sst/s:si', $ns)
-        $idIndex = -1
-        for ($i = 0; $i -lt $items.Count; $i++) { if ($items[$i].InnerText -eq $Id) { $idIndex = $i; break } }
-        if ($idIndex -lt 0) { throw "XLSX id missing: $Id" }
-        $row = $sheet.SelectSingleNode("//s:row[s:c[starts-with(@r,'A')]/s:v='$idIndex']", $ns)
-        $value = $row.SelectSingleNode("s:c[starts-with(@r,'B')]/s:v", $ns)
-        $cellText = $items[[int]$value.InnerText].SelectSingleNode('s:t', $ns)
-        if ($ChangeFirstCharacter) { $Text = 'X' + $cellText.InnerText.Substring(1) }
-        $cellText.InnerText = $Text
-        $archive.GetEntry('xl/sharedStrings.xml').Delete()
-        $writer = [IO.StreamWriter]::new($archive.CreateEntry('xl/sharedStrings.xml').Open(), [Text.UTF8Encoding]::new($false))
-        try { $writer.Write($strings.OuterXml) } finally { $writer.Dispose() }
+        $readText = {
+            param($sourceCell)
+            if (!$sourceCell) { return '' }
+            if ($sourceCell.GetAttribute('t') -eq 's') {
+                $value = $sourceCell.SelectSingleNode('s:v', $ns)
+                return $items[[int]$value.InnerText].InnerText
+            }
+            return $sourceCell.InnerText
+        }
+        $row = $null
+        foreach ($candidate in $sheet.SelectNodes('/s:worksheet/s:sheetData/s:row', $ns)) {
+            $idCell = $candidate.SelectSingleNode("s:c[@r='A$($candidate.GetAttribute('r'))']", $ns)
+            if ((& $readText $idCell) -ceq $Id) { $row = $candidate; break }
+        }
+        if (!$row) { throw "XLSX id missing: $Id" }
+        $rowNumber = $row.GetAttribute('r')
+        $cell = $row.SelectSingleNode("s:c[@r='C$rowNumber']", $ns)
+        if (!$cell) {
+            $cell = $sheet.CreateElement('c', $ns.LookupNamespace('s'))
+            $cell.SetAttribute('r', "C$rowNumber")
+            [void]$row.AppendChild($cell)
+        }
+        if ($ChangeFirstCharacter) {
+            $effectiveText = & $readText $cell
+            if ($effectiveText -eq '') { $effectiveText = & $readText $row.SelectSingleNode("s:c[@r='B$rowNumber']", $ns) }
+            $Text = 'X' + $effectiveText.Substring(1)
+        }
+        # Empty translations share an SST entry. Inline text changes only this C
+        # cell and leaves all originals, other translations and font rows intact.
+        while ($cell.HasChildNodes) { [void]$cell.RemoveChild($cell.FirstChild) }
+        $cell.SetAttribute('t', 'inlineStr')
+        $inline = $sheet.CreateElement('is', $ns.LookupNamespace('s'))
+        $textNode = $sheet.CreateElement('t', $ns.LookupNamespace('s'))
+        $space = $sheet.CreateAttribute('xml', 'space', 'http://www.w3.org/XML/1998/namespace')
+        $space.Value = 'preserve'
+        [void]$textNode.Attributes.Append($space)
+        $textNode.InnerText = $Text
+        [void]$inline.AppendChild($textNode)
+        [void]$cell.AppendChild($inline)
+        $archive.GetEntry('xl/worksheets/sheet1.xml').Delete()
+        $writer = [IO.StreamWriter]::new($archive.CreateEntry('xl/worksheets/sheet1.xml').Open(), [Text.UTF8Encoding]::new($false))
+        try { $writer.Write($sheet.OuterXml) } finally { $writer.Dispose() }
     }
     finally { $archive.Dispose() }
 }

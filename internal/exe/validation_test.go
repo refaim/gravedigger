@@ -118,6 +118,28 @@ func TestManifestValidation(t *testing.T) {
 	}
 }
 
+func TestManifestEntryFieldsMatchOriginal(t *testing.T) {
+	for name, change := range map[string]func(*exeMetadata){
+		"same-count duplicate": func(m *exeMetadata) { m.Strings[1] = m.Strings[0] },
+		"trailing newlines":    func(m *exeMetadata) { m.Strings[0].TrailingNewlines++ },
+		"changed encoding":     func(m *exeMetadata) { m.Strings[0].Encoding = "other" },
+		"missing encoding":     func(m *exeMetadata) { m.Strings[0].Encoding = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, u := unpackFixture(t, "softdisk")
+			var m exeMetadata
+			if err := json.Unmarshal(u.Manifest.Metadata, &m); err != nil {
+				t.Fatal(err)
+			}
+			change(&m)
+			u.Manifest.Metadata, _ = json.Marshal(m)
+			if _, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta); err == nil {
+				t.Fatal("accepted changed immutable metadata", name)
+			}
+		})
+	}
+}
+
 func TestEditableAssetValidation(t *testing.T) {
 	h := ExeTextHandler{}
 	_, u := unpackFixture(t, "softdisk")
@@ -148,8 +170,8 @@ func TestEditableAssetValidation(t *testing.T) {
 		}
 	}
 	// Blank spreadsheet rows are harmless, but a missing required id is not.
-	b := badWorkbook(t, [][]any{{"id", "text"}, nil, {"x", "value"}}, "strings")
-	rows, err := readStrings(b)
+	b := badWorkbook(t, [][]any{{"ID", "Английский", "Русский"}, nil, {"x", "original", "value"}}, "Тексты")
+	rows, err := readStrings(b, []StringRow{{ID: "x", Text: "original"}})
 	if err != nil || rows["x"] != "value" {
 		t.Fatal("blank row", err)
 	}
@@ -171,37 +193,55 @@ func TestLocalBufferStringLimit(t *testing.T) {
 	}
 }
 
-func TestPartialManifestAndNoExitFont(t *testing.T) {
+func TestPartialManifestRequiresFreshExport(t *testing.T) {
+	for _, variant := range []string{"softdisk", "retail"} {
+		t.Run(variant, func(t *testing.T) {
+			original, u := unpackFixture(t, variant)
+			rows, err := readUnpackedStrings(t, u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var m exeMetadata
+			if err := json.Unmarshal(u.Manifest.Metadata, &m); err != nil {
+				t.Fatal(err)
+			}
+			m.Strings = m.Strings[:83]
+			u.Manifest.Metadata, _ = json.Marshal(m)
+			var selected []StringRow
+			for _, e := range m.Strings {
+				selected = append(selected, StringRow{ID: e.ID, Text: rows[e.ID]})
+			}
+			u.Translatable["strings.xlsx"], _ = writeStrings(selected)
+			raw, start, err := decodeOriginal(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			font, err := readGameFont(raw[start:])
+			if err != nil {
+				t.Fatal(err)
+			}
+			u.Translatable["strings.xlsx"], _ = addFontSheet(u.Translatable["strings.xlsx"], font)
+			if _, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta); err == nil {
+				t.Fatal("an incomplete 83-string catalog requires a fresh export")
+			}
+		})
+	}
+}
+
+func TestCurrentManifestAllowsXBINWithoutFont(t *testing.T) {
 	original, u := unpackFixture(t, "softdisk")
-	var m exeMetadata
-	if err := json.Unmarshal(u.Manifest.Metadata, &m); err != nil {
-		t.Fatal(err)
-	}
-	m.Strings = m.Strings[:83]
-	u.Manifest.Metadata, _ = json.Marshal(m)
-	rows, _ := readStrings(u.Translatable["strings.xlsx"])
-	var selected []StringRow
-	for _, e := range m.Strings {
-		selected = append(selected, StringRow{ID: e.ID, Text: rows[e.ID]})
-	}
-	u.Translatable["strings.xlsx"], _ = writeStrings(selected)
-	f, err := readGameFont(code(rawFixture(t)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	u.Translatable["strings.xlsx"], _ = addFontSheet(u.Translatable["strings.xlsx"], f)
 	x, _ := ParseXBIN(u.Translatable["exit_screen.xb"])
 	x.Font = nil
 	u.Translatable["exit_screen.xb"], _ = BuildXBIN(x)
 	out, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta)
 	if err != nil || !bytes.Equal(out, original) {
-		t.Fatal("legacy manifest roundtrip", err)
+		t.Fatal("a current project with a fontless XBIN must roundtrip unchanged", err)
 	}
 	x.Image[0] = 'X'
 	u.Translatable["exit_screen.xb"], _ = BuildXBIN(x)
 	out, err = (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta)
-	if err != nil || code(out)[exitCallOffset] != 0xb8 {
-		t.Fatal("screen without embedded font", err)
+	if err != nil || code(out)[exitCallOffset] != 0xb8 || code(out)[exitScreenOffset] != 'X' {
+		t.Fatal("edited screen without embedded XBIN font", err)
 	}
 }
 
