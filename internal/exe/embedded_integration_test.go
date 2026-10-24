@@ -141,6 +141,10 @@ func TestEXEEmbeddedArtworkValidation(t *testing.T) {
 
 func legacyEmbeddedProject(t *testing.T, editable resource.Unpacked) resource.Unpacked {
 	t.Helper()
+	originalTexts, err := readUnpackedStrings(t, editable)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var metadata map[string]json.RawMessage
 	if err := json.Unmarshal(editable.Manifest.Metadata, &metadata); err != nil {
 		t.Fatal(err)
@@ -168,15 +172,26 @@ func legacyEmbeddedProject(t *testing.T, editable resource.Unpacked) resource.Un
 		t.Fatal(err)
 	}
 	defer func() { _ = f.Close() }()
-	rows, err := f.GetRows("strings")
+	sheet := f.GetSheetName(0)
+	rows, err := f.GetRows(sheet)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for row := len(rows) - 1; row > 0; row-- {
-		if strings.HasSuffix(rows[row][0], "_binding_separator") {
-			if err := f.RemoveRow("strings", row+1); err != nil {
-				t.Fatal(err)
-			}
+	if err := f.SetSheetName(sheet, "strings"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetSheetRow("strings", "A1", &[]any{"id", "text"}); err != nil {
+		t.Fatal(err)
+	}
+	for i, entry := range originalEntries {
+		cell, _ := excelize.CoordinatesToCellName(1, i+2)
+		if err := f.SetSheetRow("strings", cell, &[]any{entry.ID, originalTexts[entry.ID]}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for row := len(rows); row > len(originalEntries)+1; row-- {
+		if err := f.RemoveRow("strings", row); err != nil {
+			t.Fatal(err)
 		}
 	}
 	b, err := f.WriteToBuffer()
@@ -198,7 +213,20 @@ func TestEXEEmbeddedArtworkKeepsExistingProjects(t *testing.T) {
 			if err != nil || !bytes.Equal(out, original) {
 				t.Fatal("existing 3.0.1 projects without embedded PNGs must remain byte-exact", err)
 			}
-			setText(t, &legacy, "win_congrats", "A LONGER TRANSLATION OF CONGRATULATIONS!")
+			atlasWorkbook(t, &legacy, func(f *excelize.File) {
+				rows, err := f.GetRows("strings")
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i, row := range rows {
+					if row[0] == "win_congrats" {
+						cell, _ := excelize.CoordinatesToCellName(2, i+1)
+						if err := f.SetCellStr("strings", cell, "A LONGER TRANSLATION OF CONGRATULATIONS!"); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			})
 			out, err = (ExeTextHandler{}).Repack(legacy.Manifest, legacy.Translatable, legacy.Meta)
 			if err != nil || word(code(out), 0xf28) != 1024 {
 				t.Fatal("legacy text edits must retain the corrected native instruction", err)

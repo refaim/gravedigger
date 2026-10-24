@@ -17,13 +17,22 @@ gravedigger repack <output_dir> <repacked_dir>
 
 | Resource | Format | Notes |
 |---|---|---|
-| Text strings (menus, messages, win/lose screens) | XLSX | Edit the `text` column and keep `id`; translated text can exceed the original length |
+| Text strings (menus, messages, win/lose screens) | XLSX | On `Тексты`, column A is the original and B is the translation; blank translations retain the original |
 | Pictures and sprites | PNG | Keep the original dimensions and EGA palette |
 | Embedded EXE artwork | PNG | `exe/the_end.png`, 40 death-animation frames, and 32 interface tiles |
 | Game font | PNG + XLSX | Edit letters and outlines in `game_font.png`; assign characters on the `Шрифт` sheet in `strings.xlsx` |
 | Anti-piracy exit screen (80×25 VGA text mode) | [XBIN](https://web.archive.org/web/20120204063040/http://www.acid.org/info/xbin/x_spec.htm) | Edit text and the VGA font in [Moebius](https://github.com/blocktronics/moebius), a free ANSI/XBIN art editor |
 
 `repack` takes the edited assets and rebuilds game files ready to play. Keep the extracted `translatable/` and `meta/` directories together.
+
+`strings.xlsx` is one shared workbook. Its first sheet, `Тексты`, contains only
+original/translation pairs, without a header row or technical IDs. IDs and row
+bindings stay in `meta/`. Keep the originals and row order unchanged; repeated
+phrases remain separate rows. Translations can exceed the original length.
+The second sheet, `Шрифт`, contains the character assignments for the PNG font.
+When exchanging text through SP, copy the returned two columns into `Тексты`
+and keep `Шрифт` in the same workbook. No separate exchange file or commands
+are needed. Previous workbooks with `id/text` columns remain readable.
 
 The `translatable/exe/` directory contains 73 images embedded in the executable:
 `the_end.png` (208×56), eight death animations with five 48×48 frames each,

@@ -76,7 +76,7 @@ func TestFontAtlasExportRoundtrip(t *testing.T) {
 				}
 			}
 			atlasWorkbook(t, &u, func(f *excelize.File) {
-				if f.GetSheetName(0) != "strings" || f.GetSheetName(1) != "Шрифт" {
+				if f.GetSheetName(0) != "Тексты" || f.GetSheetName(1) != "Шрифт" {
 					t.Fatal("strings must remain the first sheet", f.GetSheetList())
 				}
 				rows, err := f.GetRows("Шрифт")
@@ -194,7 +194,7 @@ func TestFontAtlasRejectsMissingAssets(t *testing.T) {
 				})
 			case "missing text":
 				atlasWorkbook(t, &u, func(f *excelize.File) {
-					if err := f.RemoveRow("strings", 2); err != nil {
+					if err := f.RemoveRow("Тексты", 1); err != nil {
 						t.Fatal(err)
 					}
 				})

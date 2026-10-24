@@ -20,11 +20,17 @@ Go translation toolkit for Dangerous Dave in the Haunted Mansion.
   the same two archives used by the Python predecessor.
 - Run `go run ./cmd/gravedigger --help` during development.
 - Build with `go build -o bin/gravedigger ./cmd/gravedigger` (use `.exe` on Windows).
-- `internal/app.Version` is the application version; current app version: 3.1.0.
+- `internal/app.Version` is the application version; current app version: 3.2.0.
 - Excelize handles XLSX; Afero provides filesystem access and failure testing.
   The bundled VGA font is embedded in the Go binary.
 - Preserve the `translatable/` and `meta/` layout. Unchanged EXEs roundtrip
   byte-exact; edited EXEs are rebuilt as decompressed MZ files.
+- `strings.xlsx` is one shared workbook with consistently named `Тексты` and
+  `Шрифт` sheets. The first sheet has original/translation columns without a
+  header row or IDs. Row bindings come from the original EXE and ordered manifest
+  strings. Empty translations keep the original; originals and order are checked.
+  Legacy id/text books remain readable. Preserve the font sheet when copying
+  SP text back into the workbook; lost Unicode assignments cannot be inferred.
 - Embedded EXE artwork exports 73 fixed EGA PNGs under `translatable/exe/`:
   32 UI tiles (8x8), 40 death frames (48x48), and THE END (208x56).
   The four-plane bank at code-image 0x188e0 has stride 0x33b0 and is fully

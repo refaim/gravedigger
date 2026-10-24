@@ -149,7 +149,7 @@ func TestEditableAssetValidation(t *testing.T) {
 	}
 	// Blank spreadsheet rows are harmless, but a missing required id is not.
 	b := badWorkbook(t, [][]any{{"id", "text"}, nil, {"x", "value"}}, "strings")
-	rows, err := readStrings(b)
+	rows, err := readStrings(b, []StringRow{{ID: "x", Text: "original"}})
 	if err != nil || rows["x"] != "value" {
 		t.Fatal("blank row", err)
 	}
@@ -177,9 +177,12 @@ func TestPartialManifestAndNoExitFont(t *testing.T) {
 	if err := json.Unmarshal(u.Manifest.Metadata, &m); err != nil {
 		t.Fatal(err)
 	}
+	rows, err := readUnpackedStrings(t, u)
+	if err != nil {
+		t.Fatal(err)
+	}
 	m.Strings = m.Strings[:83]
 	u.Manifest.Metadata, _ = json.Marshal(m)
-	rows, _ := readStrings(u.Translatable["strings.xlsx"])
 	var selected []StringRow
 	for _, e := range m.Strings {
 		selected = append(selected, StringRow{ID: e.ID, Text: rows[e.ID]})

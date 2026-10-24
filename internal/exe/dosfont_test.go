@@ -32,7 +32,7 @@ func TestRussianDOSMessagesRoundtrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rows, err := readStrings(again.Translatable["strings.xlsx"])
+			rows, err := readUnpackedStrings(t, again)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,7 +49,7 @@ func TestRussianDOSMessagesRoundtrip(t *testing.T) {
 
 func TestAdditionalVisibleMessagesAreExported(t *testing.T) {
 	_, u := unpackFixture(t, "softdisk")
-	rows, err := readStrings(u.Translatable["strings.xlsx"])
+	rows, err := readUnpackedStrings(t, u)
 	if err != nil {
 		t.Fatal(err)
 	}

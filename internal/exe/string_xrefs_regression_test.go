@@ -59,7 +59,7 @@ func TestWinCongratsRelocationPreservesLevelTileFlagClear(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rows, err := readStrings(reopened.Translatable["strings.xlsx"])
+			rows, err := readUnpackedStrings(t, reopened)
 			if err != nil || rows["win_congrats"] != text {
 				t.Fatal("reopening lost the relocated translation", err)
 			}
@@ -80,7 +80,7 @@ func TestKeyboardBindingSeparatorsUseRemappedGlyph(t *testing.T) {
 				t.Fatal(err)
 			}
 			before := raw[start:]
-			rows, err := readStrings(u.Translatable["strings.xlsx"])
+			rows, err := readUnpackedStrings(t, u)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -153,7 +153,7 @@ func TestKeyboardBindingSeparatorsRelocateIndependently(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				rows, err := readStrings(reopened.Translatable["strings.xlsx"])
+				rows, err := readUnpackedStrings(t, reopened)
 				if err != nil || rows[separator.id] != text {
 					t.Fatal("reopening lost the translated separator", err)
 				}

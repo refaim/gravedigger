@@ -180,14 +180,13 @@ func (h ExeTextHandler) Repack(manifest resource.Manifest, assets, meta resource
 	if err != nil {
 		return nil, err
 	}
-	rows, err := readStrings(assets["strings.xlsx"])
+	expectedRows := make([]StringRow, 0, len(m.Strings))
+	for _, entry := range m.Strings {
+		expectedRows = append(expectedRows, StringRow{ID: entry.ID, Text: strings.TrimRight(texts[entry.ID], "\n")})
+	}
+	rows, err := readStrings(assets["strings.xlsx"], expectedRows)
 	if err != nil {
 		return nil, err
-	}
-	for id := range rows {
-		if !editable[id] {
-			return nil, fmt.Errorf("unknown strings.xlsx id %q", id)
-		}
 	}
 	fontAt, _, legacy, err := fontStubInfo(image)
 	if err != nil {
@@ -241,11 +240,8 @@ func (h ExeTextHandler) Repack(manifest resource.Manifest, assets, meta resource
 	for _, entry := range entries {
 		text := texts[entry.ID]
 		if editable[entry.ID] {
-			var ok bool
-			text, ok = rows[entry.ID]
-			if !ok {
-				return nil, fmt.Errorf("missing string %q", entry.ID)
-			}
+			// readStrings has validated and bound every editable row above.
+			text = rows[entry.ID]
 			if entry.TrailingNewlines > 0 && !strings.HasSuffix(text, "\n") {
 				text += strings.Repeat("\n", entry.TrailingNewlines)
 			}
