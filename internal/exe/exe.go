@@ -28,8 +28,9 @@ type stringMetadata struct {
 	Encoding         string `json:"encoding,omitempty"`
 }
 type exeMetadata struct {
-	OriginalEXE []byte           `json:"original_exe"`
-	Strings     []stringMetadata `json:"strings"`
+	OriginalEXE      []byte           `json:"original_exe"`
+	Strings          []stringMetadata `json:"strings"`
+	EmbeddedGraphics bool             `json:"embedded_graphics,omitempty"`
 }
 type ExeTextHandler struct{}
 
@@ -124,9 +125,16 @@ func (h ExeTextHandler) Unpack(name string, original []byte) (resource.Unpacked,
 	// This workbook was just generated with fixed sheet/cell names; adding the
 	// validated font mapping has no user-controlled serialization failure path.
 	xlsx, _ = addFontSheet(xlsx, gameFont)
-	metadata, _ := json.Marshal(exeMetadata{OriginalEXE: original, Strings: entries})
+	artwork, err := unpackEXEGraphics(image)
+	if err != nil {
+		return out, err
+	}
+	artwork["strings.xlsx"] = xlsx
+	artwork["exit_screen.xb"] = xbin
+	artwork["game_font.png"] = gameFontPNG(gameFont)
+	metadata, _ := json.Marshal(exeMetadata{OriginalEXE: original, Strings: entries, EmbeddedGraphics: true})
 	out.Manifest = resource.Manifest{Handler: h.Name(), SourceFile: name, Metadata: metadata}
-	out.Translatable = resource.Assets{"strings.xlsx": xlsx, "exit_screen.xb": xbin, "game_font.png": gameFontPNG(gameFont)}
+	out.Translatable = artwork
 	out.Meta = resource.Assets{}
 	return out, nil
 }
@@ -211,6 +219,22 @@ func (h ExeTextHandler) Repack(manifest resource.Manifest, assets, meta resource
 	mapping, err := applyGameFont(image, f)
 	if err != nil {
 		return nil, err
+	}
+	// Older extracted projects preserve the original embedded bank. New exports
+	// require every image; adding artwork to an older project opts into validation.
+	hasArtwork := m.EmbeddedGraphics
+	if !hasArtwork {
+		for name := range assets {
+			if strings.HasPrefix(name, "exe/") {
+				hasArtwork = true
+				break
+			}
+		}
+	}
+	if hasArtwork {
+		if err := applyEXEGraphics(image, assets); err != nil {
+			return nil, err
+		}
 	}
 	encodedByID := make(map[string][]byte, len(entries))
 	stringChanged := false

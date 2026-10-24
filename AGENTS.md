@@ -20,11 +20,21 @@ Go translation toolkit for Dangerous Dave in the Haunted Mansion.
   the same two archives used by the Python predecessor.
 - Run `go run ./cmd/gravedigger --help` during development.
 - Build with `go build -o bin/gravedigger ./cmd/gravedigger` (use `.exe` on Windows).
-- `internal/app.Version` is the application version; current app version: 3.0.1.
+- `internal/app.Version` is the application version; current app version: 3.1.0.
 - Excelize handles XLSX; Afero provides filesystem access and failure testing.
   The bundled VGA font is embedded in the Go binary.
 - Preserve the `translatable/` and `meta/` layout. Unchanged EXEs roundtrip
   byte-exact; edited EXEs are rebuilt as decompressed MZ files.
+- Embedded EXE artwork exports 73 fixed EGA PNGs under `translatable/exe/`:
+  32 UI tiles (8x8), 40 death frames (48x48), and THE END (208x56).
+  The four-plane bank at code-image 0x188e0 has stride 0x33b0 and is fully
+  covered by these images. Reuse the graphics package's planar PNG codec.
+  New manifests mark `embedded_graphics` and require every PNG; older projects
+  without the marker or artwork preserve the embedded bank unchanged.
+  External-sprite descriptors and the 24 PC Speaker cues remain untouched.
+- String xrefs must be verified as pointers in their actual call context.
+  0xF28 is a memset count (1024), not the win_congrats pointer at 0x10FA.
+  Keyboard binding separators are exported so font remapping also covers them.
 - Fonts require `game_font.png` and the `Шрифт` sheet in `strings.xlsx`.
   JSON font compatibility was explicitly removed at Roma's request.
   The PNG is 320x120: 16x6 bordered 20x20 cells numbered 1..96. Each has a
