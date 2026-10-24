@@ -104,7 +104,7 @@ func TestFontAtlasExportRoundtrip(t *testing.T) {
 	}
 }
 
-func TestFontAtlasRequiresPNGWithAnyManifest(t *testing.T) {
+func TestFontAtlasRequiresPNG(t *testing.T) {
 	for _, name := range []string{"JSON only", "no font assets"} {
 		t.Run(name, func(t *testing.T) {
 			_, u := unpackFixture(t, "softdisk")
@@ -117,7 +117,7 @@ func TestFontAtlasRequiresPNGWithAnyManifest(t *testing.T) {
 				u.Translatable["game_font.json"], _ = json.Marshal(f)
 			}
 			if _, err := (ExeTextHandler{}).Repack(u.Manifest, u.Translatable, u.Meta); err == nil {
-				t.Fatal("PNG is required even for older manifests; JSON must not be loaded")
+				t.Fatal("PNG is required; JSON must not be loaded")
 			}
 		})
 	}
@@ -194,7 +194,7 @@ func TestFontAtlasRejectsMissingAssets(t *testing.T) {
 				})
 			case "missing text":
 				atlasWorkbook(t, &u, func(f *excelize.File) {
-					if err := f.RemoveRow("Тексты", 1); err != nil {
+					if err := f.RemoveRow("Тексты", 2); err != nil {
 						t.Fatal(err)
 					}
 				})

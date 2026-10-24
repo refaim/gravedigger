@@ -2,7 +2,6 @@ package exe
 
 import (
 	"bytes"
-	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -14,7 +13,7 @@ import (
 func TestWriteStringsXLSXLayout(t *testing.T) {
 	for _, rows := range [][]StringRow{
 		nil,
-		{{ID: "hidden_id", Text: "  Original\ntext  "}, {ID: "hidden_formula_id", Text: "=1+1"}, {ID: "hidden_empty_id"}},
+		{{ID: "message_id", Text: "  Original\ntext  "}, {ID: "formula_id", Text: "=1+1"}, {ID: "empty_id"}},
 	} {
 		raw, err := writeStrings(rows)
 		if err != nil {
@@ -26,18 +25,28 @@ func TestWriteStringsXLSXLayout(t *testing.T) {
 		}
 		defer func() { _ = f.Close() }()
 		if f.GetSheetName(0) != "Тексты" {
-			t.Fatal("first sheet must be Тексты without technical headers", f.GetSheetList())
+			t.Fatal("first sheet must be Тексты", f.GetSheetList())
 		}
 		dimension, err := f.GetSheetDimension("Тексты")
-		if want := "A1:B" + strconv.Itoa(max(1, len(rows))); err != nil || dimension != want {
+		if want := "A1:C" + strconv.Itoa(len(rows)+1); err != nil || dimension != want {
 			t.Fatalf("dimension %q, want %q: %v", dimension, want, err)
 		}
-		for _, column := range []string{"A", "B"} {
-			width, err := f.GetColWidth("Тексты", column)
-			if err != nil || width != 60 {
-				t.Fatalf("column %s width %v, want 60: %v", column, width, err)
+		for i, header := range []string{"ID", "Английский", "Русский"} {
+			cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+			if value, err := f.GetCellValue("Тексты", cell); err != nil || value != header {
+				t.Fatalf("header %s: %q, want %q: %v", cell, value, header, err)
 			}
-			for _, row := range []int{1, max(1, len(rows))} {
+		}
+		for _, column := range []string{"A", "B", "C"} {
+			wantWidth := float64(60)
+			if column == "A" {
+				wantWidth = 32
+			}
+			width, err := f.GetColWidth("Тексты", column)
+			if err != nil || width != wantWidth {
+				t.Fatalf("column %s width %v, want %v: %v", column, width, wantWidth, err)
+			}
+			for _, row := range []int{1, len(rows) + 1} {
 				cell := column + strconv.Itoa(row)
 				styleID, err := f.GetCellStyle("Тексты", cell)
 				if err != nil {
@@ -50,16 +59,20 @@ func TestWriteStringsXLSXLayout(t *testing.T) {
 			}
 		}
 		for i, row := range rows {
-			a, b := "A"+strconv.Itoa(i+1), "B"+strconv.Itoa(i+1)
-			original, err := f.GetCellValue("Тексты", a, excelize.Options{RawCellValue: true})
+			a, b, c := "A"+strconv.Itoa(i+2), "B"+strconv.Itoa(i+2), "C"+strconv.Itoa(i+2)
+			id, err := f.GetCellValue("Тексты", a, excelize.Options{RawCellValue: true})
+			if err != nil || id != row.ID {
+				t.Fatalf("ID row %d: %q, %v", i+2, id, err)
+			}
+			original, err := f.GetCellValue("Тексты", b, excelize.Options{RawCellValue: true})
 			if err != nil || original != row.Text {
 				t.Fatalf("original row %d: %q, %v", i+1, original, err)
 			}
-			translation, err := f.GetCellValue("Тексты", b, excelize.Options{RawCellValue: true})
+			translation, err := f.GetCellValue("Тексты", c, excelize.Options{RawCellValue: true})
 			if err != nil || translation != "" {
 				t.Fatalf("translation row %d must start empty: %q, %v", i+1, translation, err)
 			}
-			if formula, err := f.GetCellFormula("Тексты", a); err != nil || formula != "" {
+			if formula, err := f.GetCellFormula("Тексты", b); err != nil || formula != "" {
 				t.Fatal("an original beginning with = must remain text", formula, err)
 			}
 		}
@@ -111,7 +124,7 @@ func TestStringsXLSXTranslationColumnsAndRenamedSheet(t *testing.T) {
 			return err
 		}
 		for i, translation := range []string{"Первый", "  Второй\n ", " ", "", "=literal translation"} {
-			if err := f.SetCellStr("SP renamed this", "B"+strconv.Itoa(i+1), translation); err != nil {
+			if err := f.SetCellStr("SP renamed this", "C"+strconv.Itoa(i+2), translation); err != nil {
 				return err
 			}
 		}
@@ -129,6 +142,62 @@ func TestStringsXLSXTranslationColumnsAndRenamedSheet(t *testing.T) {
 	}
 }
 
+func TestStringsXLSXThreeColumnsBindByID(t *testing.T) {
+	expected := []StringRow{{"first", "Same"}, {"second", "Same"}}
+	raw := badWorkbook(t, [][]any{{"ID", "Английский", "Русский"}, {"second", "Same", " Второй "}, {}, {"first", "Same", "Первый"}}, "renamed")
+	got, err := readStrings(raw, expected)
+	want := map[string]string{"first": "Первый", "second": " Второй "}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatal("reordered rows with duplicate originals must bind translations by ID", got, err)
+	}
+}
+
+func TestStringsXLSXRejectsOldFormats(t *testing.T) {
+	expected := []StringRow{{"x", "First"}, {"y", "Second"}}
+	for name, rows := range map[string][][]any{
+		"old ID text":                     {{"id", "text"}, {"x", "Первый"}, {"y", "Второй"}},
+		"headerless original translation": {{"First", "Первый"}, {"Second", "Второй"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := readStrings(badWorkbook(t, rows, "Тексты"), expected); err == nil {
+				t.Fatal("old workbook formats must be rejected")
+			}
+		})
+	}
+}
+
+func TestStringsXLSXRejectsInvalidThreeColumns(t *testing.T) {
+	expected := []StringRow{{"x", "First"}, {"y", "Second"}}
+	for name, rows := range map[string][][]any{
+		"wrong ID header":      {{"wrong", "Английский", "Русский"}, {"x", "First"}, {"y", "Second"}},
+		"wrong English header": {{"ID", "wrong", "Русский"}, {"x", "First"}, {"y", "Second"}},
+		"wrong Russian header": {{"ID", "Английский", "wrong"}, {"x", "First"}, {"y", "Second"}},
+		"missing ID":           {{"ID", "Английский", "Русский"}, {"x", "First"}},
+		"duplicate ID":         {{"ID", "Английский", "Русский"}, {"x", "First"}, {"x", "First"}},
+		"unknown ID":           {{"ID", "Английский", "Русский"}, {"unknown", "First"}, {"y", "Second"}},
+		"empty ID":             {{"ID", "Английский", "Русский"}, {"", "First"}, {"y", "Second"}},
+		"wrong original":       {{"ID", "Английский", "Русский"}, {"x", "Changed"}, {"y", "Second"}},
+		"missing original":     {{"ID", "Английский", "Русский"}, {"x"}, {"y", "Second"}},
+		"other ID original":    {{"ID", "Английский", "Русский"}, {"y", "First"}, {"x", "Second"}},
+		"fourth column":        {{"ID", "Английский", "Русский"}, {"x", "First", "translation", "extra"}, {"y", "Second"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := readStrings(badWorkbook(t, rows, "Тексты"), expected); err == nil {
+				t.Fatal("accepted invalid three-column workbook")
+			}
+		})
+	}
+	for _, cell := range []string{"A1", "B1", "C1", "A2", "B2", "C2"} {
+		t.Run("formula "+cell, func(t *testing.T) {
+			raw := badWorkbook(t, [][]any{{"ID", "Английский", "Русский"}, {"x", "First"}, {"y", "Second"}}, "Тексты")
+			raw = editStringsWorkbook(t, raw, func(f *excelize.File) error { return f.SetCellFormula("Тексты", cell, "1+1") })
+			if _, err := readStrings(raw, expected); err == nil || !strings.Contains(err.Error(), "formula") {
+				t.Fatal("formula cells must never be imported by their cached value", err)
+			}
+		})
+	}
+}
+
 func TestStringsXLSXEmptyOriginals(t *testing.T) {
 	for _, expected := range [][]StringRow{nil, {{"a", ""}}, {{"a", ""}, {"b", ""}}} {
 		raw, err := writeStrings(expected)
@@ -137,38 +206,26 @@ func TestStringsXLSXEmptyOriginals(t *testing.T) {
 		}
 		got, err := readStrings(raw, expected)
 		if err != nil || len(got) != len(expected) {
-			t.Fatal("empty originals are valid even when GetRows trims them", got, err)
+			t.Fatal("empty originals must remain valid with their IDs", got, err)
 		}
 	}
-	for _, rows := range [][][]any{{{"First"}}, {{"First"}, {"", "Translated empty original"}}} {
+	for _, rows := range [][][]any{
+		{{"ID", "Английский", "Русский"}, {"a", "First"}, {"b"}, {"c"}},
+		{{"ID", "Английский", "Русский"}, {"a", "First"}, {"b", "", "Translated empty original"}, {"c"}},
+	} {
 		expected := []StringRow{{"a", "First"}, {"b", ""}, {"c", ""}}
 		got, err := readStrings(badWorkbook(t, rows, "any name"), expected)
 		if err != nil || got["a"] != "First" || got["c"] != "" {
-			t.Fatal("trailing blank originals must remain in the result", got, err)
+			t.Fatal("empty English cells must remain valid while their IDs are present", got, err)
 		}
 	}
 }
 
-func TestStringsXLSXLegacyHeaderAndLiteralHeaderText(t *testing.T) {
-	expected := []StringRow{{"x", "Original X"}, {"y", "Original Y"}, {"z", "Original Z"}}
-	legacy := badWorkbook(t, [][]any{{"id", "text"}, {"y", ""}, {}, {"x", " Перевод "}, {"z"}}, "strings")
-	got, err := readStrings(legacy, expected)
-	want := map[string]string{"x": " Перевод ", "y": "", "z": ""}
-	if err != nil || !reflect.DeepEqual(got, want) {
-		t.Fatal("legacy ID/text rows must retain their old empty and unordered semantics", got, err)
-	}
-	expected = []StringRow{{"real_id", "id"}}
-	got, err = readStrings(badWorkbook(t, [][]any{{"id", "text"}}, "Тексты"), expected)
+func TestStringsXLSXOriginalMayLookLikeOldHeader(t *testing.T) {
+	expected := []StringRow{{"real_id", "id"}}
+	got, err := readStrings(badWorkbook(t, [][]any{{"ID", "Английский", "Русский"}, {"real_id", "id", "text"}}, "Тексты"), expected)
 	if err != nil || got["real_id"] != "text" {
-		t.Fatal("a real original 'id' and translation 'text' are not a technical header", got, err)
-	}
-	got, err = readStrings(badWorkbook(t, [][]any{{"id", "text"}, {"real_id", "translated"}}, "strings"), expected)
-	if err != nil || got["real_id"] != "translated" {
-		t.Fatal("legacy header must also work when the original happens to be 'id'", got, err)
-	}
-	got, err = readStrings(badWorkbook(t, [][]any{{"id", "text"}}, "strings"), nil)
-	if err != nil || len(got) != 0 {
-		t.Fatal("empty legacy workbook", got, err)
+		t.Fatal("ordinary original and translation strings must remain literal", got, err)
 	}
 }
 
@@ -200,43 +257,11 @@ func badWorkbook(t *testing.T, rows [][]any, sheet string) []byte {
 
 func TestStringsXLSXRejectsInvalid(t *testing.T) {
 	expected := []StringRow{{"x", "First"}, {"y", "Second"}}
-	for name, rows := range map[string][][]any{
-		"empty":                   nil,
-		"missing nonempty row":    {{"First"}},
-		"extra row":               {{"First"}, {"Second"}, {"Extra"}},
-		"changed original":        {{"Changed"}, {"Second"}},
-		"reordered originals":     {{"Second"}, {"First"}},
-		"blank nonempty original": {{"First"}, {""}},
-		"third column":            {{"First", "translation", "extra"}, {"Second"}},
-		"legacy wrong header":     {{"id", "wrong"}, {"x", "a"}, {"y", "b"}},
-		"legacy duplicate ID":     {{"id", "text"}, {"x", "a"}, {"x", "b"}},
-		"legacy missing ID":       {{"id", "text"}, {}, {"x", "a"}},
-		"legacy empty ID":         {{"id", "text"}, {"", "a"}, {"y", "b"}},
-		"legacy unknown ID":       {{"id", "text"}, {"unknown", "a"}, {"y", "b"}},
-		"legacy third column":     {{"id", "text"}, {"x", "a", "extra"}, {"y", "b"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := readStrings(badWorkbook(t, rows, "imported"), expected); err == nil {
-				t.Fatal("accepted invalid text workbook")
-			}
-		})
+	if _, err := readStrings(badWorkbook(t, nil, "Тексты"), expected); err == nil {
+		t.Fatal("accepted an empty sheet without the required headers")
 	}
 	if _, err := readStrings([]byte("not zip"), expected); err == nil {
 		t.Fatal("accepted invalid XLSX bytes")
-	}
-	for _, legacy := range []bool{false, true} {
-		for _, column := range []string{"A", "B", "C"} {
-			t.Run(fmt.Sprint("formula ", legacy, column), func(t *testing.T) {
-				rows, sheet, row := [][]any{{"First"}, {"Second"}}, "Тексты", "1"
-				if legacy {
-					rows, sheet, row = [][]any{{"id", "text"}, {"x", "a"}, {"y", "b"}}, "strings", "2"
-				}
-				raw := editStringsWorkbook(t, badWorkbook(t, rows, sheet), func(f *excelize.File) error { return f.SetCellFormula(sheet, column+row, "1+1") })
-				if _, err := readStrings(raw, expected); err == nil || !strings.Contains(err.Error(), "cell") {
-					t.Fatal("formula needs a cell-specific error", err)
-				}
-			})
-		}
 	}
 	raw := badWorkbook(t, nil, "empty")
 	raw = editStringsWorkbook(t, raw, func(f *excelize.File) error { f.WorkBook.Sheets.Sheet = nil; return nil })

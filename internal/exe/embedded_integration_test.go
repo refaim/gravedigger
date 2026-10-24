@@ -10,10 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xuri/excelize/v2"
-
 	"github.com/refaim/gravedigger/internal/compression"
-	"github.com/refaim/gravedigger/internal/resource"
 )
 
 func embeddedTestImage(t *testing.T, raw []byte) *image.NRGBA {
@@ -139,110 +136,25 @@ func TestEXEEmbeddedArtworkValidation(t *testing.T) {
 	})
 }
 
-func legacyEmbeddedProject(t *testing.T, editable resource.Unpacked) resource.Unpacked {
-	t.Helper()
-	originalTexts, err := readUnpackedStrings(t, editable)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var metadata map[string]json.RawMessage
-	if err := json.Unmarshal(editable.Manifest.Metadata, &metadata); err != nil {
-		t.Fatal(err)
-	}
-	delete(metadata, "embedded_graphics")
-	var entries []stringMetadata
-	if err := json.Unmarshal(metadata["strings"], &entries); err != nil {
-		t.Fatal(err)
-	}
-	var originalEntries []stringMetadata
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.ID, "_binding_separator") {
-			originalEntries = append(originalEntries, entry)
-		}
-	}
-	metadata["strings"], _ = json.Marshal(originalEntries)
-	editable.Manifest.Metadata, _ = json.Marshal(metadata)
-	for name := range editable.Translatable {
-		if strings.HasPrefix(name, "exe/") {
-			delete(editable.Translatable, name)
-		}
-	}
-	f, err := excelize.OpenReader(bytes.NewReader(editable.Translatable["strings.xlsx"]))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = f.Close() }()
-	sheet := f.GetSheetName(0)
-	rows, err := f.GetRows(sheet)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := f.SetSheetName(sheet, "strings"); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.SetSheetRow("strings", "A1", &[]any{"id", "text"}); err != nil {
-		t.Fatal(err)
-	}
-	for i, entry := range originalEntries {
-		cell, _ := excelize.CoordinatesToCellName(1, i+2)
-		if err := f.SetSheetRow("strings", cell, &[]any{entry.ID, originalTexts[entry.ID]}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for row := len(rows); row > len(originalEntries)+1; row-- {
-		if err := f.RemoveRow("strings", row); err != nil {
-			t.Fatal(err)
-		}
-	}
-	b, err := f.WriteToBuffer()
-	if err != nil {
-		t.Fatal(err)
-	}
-	editable.Translatable["strings.xlsx"] = b.Bytes()
-	return editable
-}
-
-func TestEXEEmbeddedArtworkKeepsExistingProjects(t *testing.T) {
+func TestEXEEmbeddedArtworkRejectsProjectWithoutBank(t *testing.T) {
 	for _, variant := range []string{"softdisk", "retail"} {
 		t.Run(variant, func(t *testing.T) {
-			original, editable := unpackFixture(t, variant)
-			fullArtwork := mapClone(editable.Translatable)
-			artwork := editable.Translatable["exe/the_end.png"]
-			legacy := legacyEmbeddedProject(t, editable)
-			out, err := (ExeTextHandler{}).Repack(legacy.Manifest, legacy.Translatable, legacy.Meta)
-			if err != nil || !bytes.Equal(out, original) {
-				t.Fatal("existing 3.0.1 projects without embedded PNGs must remain byte-exact", err)
+			_, editable := unpackFixture(t, variant)
+			// Retain a fresh three-column workbook, the full string catalog,
+			// and the font. Only the obsolete optional-artwork shape remains.
+			var metadata map[string]json.RawMessage
+			if err := json.Unmarshal(editable.Manifest.Metadata, &metadata); err != nil {
+				t.Fatal(err)
 			}
-			atlasWorkbook(t, &legacy, func(f *excelize.File) {
-				rows, err := f.GetRows("strings")
-				if err != nil {
-					t.Fatal(err)
-				}
-				for i, row := range rows {
-					if row[0] == "win_congrats" {
-						cell, _ := excelize.CoordinatesToCellName(2, i+1)
-						if err := f.SetCellStr("strings", cell, "A LONGER TRANSLATION OF CONGRATULATIONS!"); err != nil {
-							t.Fatal(err)
-						}
-					}
-				}
-			})
-			out, err = (ExeTextHandler{}).Repack(legacy.Manifest, legacy.Translatable, legacy.Meta)
-			if err != nil || word(code(out), 0xf28) != 1024 {
-				t.Fatal("legacy text edits must retain the corrected native instruction", err)
-			}
-			legacy.Translatable["exe/the_end.png"] = artwork
-			if _, err := (ExeTextHandler{}).Repack(legacy.Manifest, legacy.Translatable, legacy.Meta); err == nil {
-				t.Fatal("adding partial artwork to an old project must not silently ignore it")
-			}
-			for name, data := range fullArtwork {
+			delete(metadata, "embedded_graphics")
+			editable.Manifest.Metadata, _ = json.Marshal(metadata)
+			for name := range editable.Translatable {
 				if strings.HasPrefix(name, "exe/") {
-					legacy.Translatable[name] = data
+					delete(editable.Translatable, name)
 				}
 			}
-			withArtwork, err := (ExeTextHandler{}).Repack(legacy.Manifest, legacy.Translatable, legacy.Meta)
-			if err != nil || !bytes.Equal(withArtwork, out) {
-				t.Fatal("old projects with a complete unchanged artwork bank must remain byte-exact", err)
+			if _, err := (ExeTextHandler{}).Repack(editable.Manifest, editable.Translatable, editable.Meta); err == nil {
+				t.Fatal("projects without the required embedded artwork need a fresh export")
 			}
 		})
 	}

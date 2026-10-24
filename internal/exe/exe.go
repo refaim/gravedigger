@@ -28,9 +28,8 @@ type stringMetadata struct {
 	Encoding         string `json:"encoding,omitempty"`
 }
 type exeMetadata struct {
-	OriginalEXE      []byte           `json:"original_exe"`
-	Strings          []stringMetadata `json:"strings"`
-	EmbeddedGraphics bool             `json:"embedded_graphics,omitempty"`
+	OriginalEXE []byte           `json:"original_exe"`
+	Strings     []stringMetadata `json:"strings"`
 }
 type ExeTextHandler struct{}
 
@@ -132,30 +131,30 @@ func (h ExeTextHandler) Unpack(name string, original []byte) (resource.Unpacked,
 	artwork["strings.xlsx"] = xlsx
 	artwork["exit_screen.xb"] = xbin
 	artwork["game_font.png"] = gameFontPNG(gameFont)
-	metadata, _ := json.Marshal(exeMetadata{OriginalEXE: original, Strings: entries, EmbeddedGraphics: true})
+	metadata, _ := json.Marshal(exeMetadata{OriginalEXE: original, Strings: entries})
 	out.Manifest = resource.Manifest{Handler: h.Name(), SourceFile: name, Metadata: metadata}
 	out.Translatable = artwork
 	out.Meta = resource.Assets{}
 	return out, nil
 }
 
-func validateManifest(entries []stringMetadata, expected []stringMetadata) (map[string]bool, error) {
+func validateManifest(entries []stringMetadata, expected []stringMetadata) error {
+	if len(entries) != len(expected) {
+		return fmt.Errorf("EXE manifest requires all %d strings; got %d", len(expected), len(entries))
+	}
 	known := make(map[string]stringMetadata, len(expected))
 	for _, e := range expected {
 		known[e.ID] = e
 	}
 	seen := make(map[string]bool, len(entries))
-	if len(entries) == 0 {
-		return nil, fmt.Errorf("manifest has no strings")
-	}
 	for _, e := range entries {
 		actual, ok := known[e.ID]
-		if !ok || seen[e.ID] || e.Offset != actual.Offset || e.MaxLength != actual.MaxLength {
-			return nil, fmt.Errorf("invalid manifest string %q", e.ID)
+		if !ok || seen[e.ID] || e != actual {
+			return fmt.Errorf("invalid manifest string %q", e.ID)
 		}
 		seen[e.ID] = true
 	}
-	return seen, nil
+	return nil
 }
 
 func (h ExeTextHandler) Repack(manifest resource.Manifest, assets, meta resource.Assets) ([]byte, error) {
@@ -176,8 +175,7 @@ func (h ExeTextHandler) Repack(manifest resource.Manifest, assets, meta resource
 	if err != nil {
 		return nil, err
 	}
-	editable, err := validateManifest(m.Strings, entries)
-	if err != nil {
+	if err := validateManifest(m.Strings, entries); err != nil {
 		return nil, err
 	}
 	expectedRows := make([]StringRow, 0, len(m.Strings))
@@ -188,7 +186,7 @@ func (h ExeTextHandler) Repack(manifest resource.Manifest, assets, meta resource
 	if err != nil {
 		return nil, err
 	}
-	fontAt, _, legacy, err := fontStubInfo(image)
+	fontAt, _, err := fontStubInfo(image)
 	if err != nil {
 		return nil, err
 	}
@@ -198,11 +196,6 @@ func (h ExeTextHandler) Repack(manifest resource.Manifest, assets, meta resource
 	}
 	nearEnd := wordAt(image, 0x6d)
 	initialStackEnd := wordAt(data, 14)*16 + wordAt(data, 16)
-	if legacy {
-		// The historical size constant included a near font/stub. On an edit,
-		// compact all live appended strings below the new far font reservation.
-		nearEnd = wordAt(image, 0xc8)
-	}
 	nearCursor := max(initialStackEnd, dsBase+nearEnd)
 	f, err := readGameFont(image)
 	if err != nil {
@@ -219,32 +212,15 @@ func (h ExeTextHandler) Repack(manifest resource.Manifest, assets, meta resource
 	if err != nil {
 		return nil, err
 	}
-	// Older extracted projects preserve the original embedded bank. New exports
-	// require every image; adding artwork to an older project opts into validation.
-	hasArtwork := m.EmbeddedGraphics
-	if !hasArtwork {
-		for name := range assets {
-			if strings.HasPrefix(name, "exe/") {
-				hasArtwork = true
-				break
-			}
-		}
-	}
-	if hasArtwork {
-		if err := applyEXEGraphics(image, assets); err != nil {
-			return nil, err
-		}
+	if err := applyEXEGraphics(image, assets); err != nil {
+		return nil, err
 	}
 	encodedByID := make(map[string][]byte, len(entries))
-	stringChanged := false
 	for _, entry := range entries {
-		text := texts[entry.ID]
-		if editable[entry.ID] {
-			// readStrings has validated and bound every editable row above.
-			text = rows[entry.ID]
-			if entry.TrailingNewlines > 0 && !strings.HasSuffix(text, "\n") {
-				text += strings.Repeat("\n", entry.TrailingNewlines)
-			}
+		// readStrings has validated and bound the complete current string catalog.
+		text := rows[entry.ID]
+		if entry.TrailingNewlines > 0 && !strings.HasSuffix(text, "\n") {
+			text += strings.Repeat("\n", entry.TrailingNewlines)
 		}
 		var encoded []byte
 		if isDOSString(entry.ID) {
@@ -259,7 +235,6 @@ func (h ExeTextHandler) Repack(manifest resource.Manifest, assets, meta resource
 			return nil, fmt.Errorf("bload_error is limited to 27 bytes by its stack-buffer caller")
 		}
 		encodedByID[entry.ID] = encoded
-		stringChanged = stringChanged || !bytes.Equal(encoded, image[entry.Offset:entry.Offset+entry.MaxLength])
 	}
 	if len(encodedByID["continue_level"])+1+len(encodedByID["continue_suffix"])+1 > 80 {
 		return nil, fmt.Errorf("continue_level + level digit + continue_suffix + NUL exceeds its 80-byte game buffer")
@@ -274,13 +249,8 @@ func (h ExeTextHandler) Repack(manifest resource.Manifest, assets, meta resource
 	screenChanged := !bytes.Equal(image[exitScreenOffset:exitScreenOffset+exitScreenSize], x.Image)
 	copy(image[exitScreenOffset:exitScreenOffset+exitScreenSize], x.Image)
 	fontChanged := x.Font != nil && !bytes.Equal(x.Font, originalFont)
-	anythingChanged := stringChanged || fontChanged || !bytes.Equal(data, baseline)
-	if (x.Font != nil && (screenChanged || fontChanged)) || (fontAt >= 0 && anythingChanged) {
-		font := x.Font
-		if font == nil {
-			font = originalFont
-		}
-		data, err = patchExitFont(data, font)
+	if x.Font != nil && (screenChanged || fontChanged) {
+		data, err = patchExitFont(data, x.Font)
 		if err != nil {
 			return nil, err
 		}
@@ -288,8 +258,7 @@ func (h ExeTextHandler) Repack(manifest resource.Manifest, assets, meta resource
 	}
 	for i, entry := range entries {
 		encoded := encodedByID[entry.ID]
-		moveLegacyString := legacy && anythingChanged && entry.Offset >= initialStackEnd
-		if len(encoded) <= entry.MaxLength && !moveLegacyString {
+		if len(encoded) <= entry.MaxLength {
 			if !bytes.Equal(encoded, image[entry.Offset:entry.Offset+entry.MaxLength]) {
 				clear(image[entry.Offset : entry.Offset+entry.MaxLength+1])
 				copy(image[entry.Offset:], encoded)
@@ -353,7 +322,7 @@ var (
 
 func finishMZ(data []byte, start, nearEnd int) error {
 	image := data[start:]
-	if !bytes.Equal(image[0x6b:0x6d], []byte{0x81, 0xc7}) || (image[0x8c] != 0x75 && image[0x8c] != 0xeb) || image[0xc7] != 0xb9 || wordAt(image, 0xc8) != 0xd65a {
+	if !bytes.Equal(image[0x6b:0x6d], []byte{0x81, 0xc7}) || image[0x8c] != 0x75 || image[0xc7] != 0xb9 || wordAt(image, 0xc8) != 0xd65a {
 		return fmt.Errorf("unsupported C startup resize/BSS code")
 	}
 	block := image[0x9c:0xa8]
@@ -375,7 +344,6 @@ func finishMZ(data []byte, start, nearEnd int) error {
 	putWordAt(image, 0x6d, nearEnd)
 	putWordAt(image, dsBase+0x9a, nearEnd)
 	putWordAt(image, dsBase+0x9c, nearEnd)
-	image[0x8c] = 0x75
 	farReserved := false
 	if image[exitCallOffset] == 0x9a {
 		stub := wordAt(image, exitCallOffset+1) + wordAt(image, exitCallOffset+3)*16

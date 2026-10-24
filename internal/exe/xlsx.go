@@ -15,14 +15,21 @@ func writeStrings(rows []StringRow) ([]byte, error) {
 	// The workbook and all coordinates are created here, so these calls cannot
 	// refer to a missing sheet or an invalid cell.
 	_ = f.SetSheetName("Sheet1", "Тексты")
+	for i, header := range []string{"ID", "Английский", "Русский"} {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		_ = f.SetCellStr("Тексты", cell, header)
+	}
 	for i, row := range rows {
-		cell, _ := excelize.CoordinatesToCellName(1, i+1)
+		cell, _ := excelize.CoordinatesToCellName(1, i+2)
+		_ = f.SetCellStr("Тексты", cell, row.ID)
+		cell, _ = excelize.CoordinatesToCellName(2, i+2)
 		_ = f.SetCellStr("Тексты", cell, row.Text)
-		cell, _ = excelize.CoordinatesToCellName(2, i+1)
+		cell, _ = excelize.CoordinatesToCellName(3, i+2)
 		_ = f.SetCellStr("Тексты", cell, "")
 	}
-	lastCell, _ := excelize.CoordinatesToCellName(2, max(1, len(rows)))
-	_ = f.SetColWidth("Тексты", "A", "B", 60)
+	lastCell, _ := excelize.CoordinatesToCellName(3, len(rows)+1)
+	_ = f.SetColWidth("Тексты", "A", "A", 32)
+	_ = f.SetColWidth("Тексты", "B", "C", 60)
 	// The alignment and range are constants on this freshly created worksheet.
 	style, _ := f.NewStyle(&excelize.Style{Alignment: &excelize.Alignment{WrapText: true, Vertical: "top"}})
 	_ = f.SetCellStyle("Тексты", "A1", lastCell, style)
@@ -45,10 +52,10 @@ func readStrings(raw []byte, expected []StringRow) (map[string]string, error) {
 		return nil, fmt.Errorf("strings.xlsx: %w", err)
 	}
 	for i, row := range rows {
-		if len(row) > 2 {
-			return nil, fmt.Errorf("strings.xlsx cell C%d: only original/translation columns A/B are allowed", i+1)
+		if len(row) > 3 {
+			return nil, fmt.Errorf("strings.xlsx cell D%d: only ID/original/translation columns A/B/C are allowed", i+1)
 		}
-		for col := 1; col <= 2; col++ {
+		for col := 1; col <= 3; col++ {
 			cell, _ := excelize.CoordinatesToCellName(col, i+1)
 			// GetRows loaded this sheet, and these bounded coordinates are valid.
 			formula, _ := f.GetCellFormula(sheet, cell)
@@ -57,40 +64,16 @@ func readStrings(raw []byte, expected []StringRow) (map[string]string, error) {
 			}
 		}
 	}
-	// A legacy workbook has one extra ID/text header row. Checking its size also
-	// leaves a real first original "id" with translation "text" unambiguous.
-	if len(rows) > len(expected) && len(rows[0]) == 2 && rows[0][0] == "id" && rows[0][1] == "text" {
-		return readLegacyStringRows(rows[1:], expected)
+	if len(rows) == 0 || len(rows[0]) != 3 || rows[0][0] != "ID" || rows[0][1] != "Английский" || rows[0][2] != "Русский" {
+		return nil, fmt.Errorf("strings.xlsx cell A1: expected headers ID, Английский, Русский")
 	}
-	if len(rows) > len(expected) {
-		return nil, fmt.Errorf("strings.xlsx has extra rows: expected %d original/translation rows, got %d", len(expected), len(rows))
-	}
-	out := make(map[string]string, len(expected))
-	for i, original := range expected {
-		text, translation := "", ""
-		if i < len(rows) {
-			if len(rows[i]) > 0 {
-				text = rows[i][0]
-			}
-			if len(rows[i]) > 1 {
-				translation = rows[i][1]
-			}
-		}
-		if text != original.Text {
-			return nil, fmt.Errorf("strings.xlsx cell A%d: original text is missing, reordered or changed; keep column A unchanged", i+1)
-		}
-		if translation == "" {
-			translation = original.Text
-		}
-		out[original.ID] = translation
-	}
-	return out, nil
+	return readIDStringRows(rows[1:], expected)
 }
 
-func readLegacyStringRows(rows [][]string, expected []StringRow) (map[string]string, error) {
-	known := make(map[string]bool, len(expected))
+func readIDStringRows(rows [][]string, expected []StringRow) (map[string]string, error) {
+	known := make(map[string]string, len(expected))
 	for _, original := range expected {
-		known[original.ID] = true
+		known[original.ID] = original.Text
 	}
 	out := make(map[string]string, len(expected))
 	for i, row := range rows {
@@ -98,23 +81,34 @@ func readLegacyStringRows(rows [][]string, expected []StringRow) (map[string]str
 			continue
 		}
 		if row[0] == "" {
-			return nil, fmt.Errorf("invalid legacy strings.xlsx cell A%d: missing string id", i+2)
+			return nil, fmt.Errorf("invalid strings.xlsx cell A%d: missing string id", i+2)
 		}
-		if !known[row[0]] {
-			return nil, fmt.Errorf("unknown legacy strings.xlsx id %q", row[0])
+		original, exists := known[row[0]]
+		if !exists {
+			return nil, fmt.Errorf("unknown strings.xlsx id %q in cell A%d", row[0], i+2)
 		}
 		if _, duplicate := out[row[0]]; duplicate {
-			return nil, fmt.Errorf("duplicate legacy strings.xlsx id %q", row[0])
+			return nil, fmt.Errorf("duplicate strings.xlsx id %q in cell A%d", row[0], i+2)
 		}
 		text := ""
-		if len(row) == 2 {
+		if len(row) > 1 {
 			text = row[1]
 		}
-		out[row[0]] = text
+		if text != original {
+			return nil, fmt.Errorf("strings.xlsx cell B%d: original English text for id %q is missing or changed", i+2, row[0])
+		}
+		translation := ""
+		if len(row) > 2 {
+			translation = row[2]
+		}
+		if translation == "" {
+			translation = original
+		}
+		out[row[0]] = translation
 	}
 	for _, original := range expected {
 		if _, ok := out[original.ID]; !ok {
-			return nil, fmt.Errorf("missing legacy strings.xlsx id %q", original.ID)
+			return nil, fmt.Errorf("missing strings.xlsx id %q", original.ID)
 		}
 	}
 	return out, nil

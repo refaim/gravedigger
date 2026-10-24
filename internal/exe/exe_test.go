@@ -52,7 +52,7 @@ func setText(t *testing.T, u *resource.Unpacked, id, text string) {
 	}
 	for i, row := range m.Strings {
 		if row.ID == id {
-			cell, _ := excelize.CoordinatesToCellName(2, i+1)
+			cell, _ := excelize.CoordinatesToCellName(3, i+2)
 			if err := f.SetCellStr("Тексты", cell, text); err != nil {
 				t.Fatal(err)
 			}

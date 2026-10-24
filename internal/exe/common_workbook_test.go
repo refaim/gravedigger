@@ -35,15 +35,25 @@ func TestCommonWorkbookExport(t *testing.T) {
 				t.Fatal(err)
 			}
 			rows, err := book.GetRows("Тексты", excelize.Options{RawCellValue: true})
-			if err != nil || len(rows) != len(metadata.Strings) {
-				t.Fatal("text rows must contain only original/translation pairs, without an ID header", len(rows), err)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) == 0 || len(rows[0]) != 3 || rows[0][0] != "ID" || rows[0][1] != "Английский" || rows[0][2] != "Русский" {
+				t.Fatal("text sheet must begin with ID/Английский/Русский headers")
+			}
+			if len(rows) != len(metadata.Strings)+1 {
+				t.Fatal("text sheet must contain one header and every string", len(rows))
 			}
 			for i, entry := range metadata.Strings {
-				originalText, err := book.GetCellValue("Тексты", fmt.Sprintf("A%d", i+1))
+				id, err := book.GetCellValue("Тексты", fmt.Sprintf("A%d", i+2))
+				if err != nil || id != entry.ID {
+					t.Fatal("ID does not match the immutable metadata", entry.ID, id, err)
+				}
+				originalText, err := book.GetCellValue("Тексты", fmt.Sprintf("B%d", i+2))
 				if err != nil || originalText != strings.TrimRight(originals[entry.ID], "\n") {
 					t.Fatal("original does not match the immutable metadata", entry.ID, originalText, err)
 				}
-				translation, err := book.GetCellValue("Тексты", fmt.Sprintf("B%d", i+1))
+				translation, err := book.GetCellValue("Тексты", fmt.Sprintf("C%d", i+2))
 				if err != nil || translation != "" {
 					t.Fatal("new projects must have an empty translation column", entry.ID, translation, err)
 				}
@@ -70,9 +80,10 @@ func TestCommonWorkbookDuplicateOriginalsAndRenamedSheet(t *testing.T) {
 			}
 			atlasWorkbook(t, &editable, func(book *excelize.File) {
 				var firstOriginal string
+				var translatedRows []int
 				for i, entry := range metadata.Strings {
 					if translation, ok := translations[entry.ID]; ok {
-						cell, _ := excelize.CoordinatesToCellName(1, i+1)
+						cell, _ := excelize.CoordinatesToCellName(2, i+2)
 						text, err := book.GetCellValue("Тексты", cell)
 						if err != nil {
 							t.Fatal(err)
@@ -81,10 +92,34 @@ func TestCommonWorkbookDuplicateOriginalsAndRenamedSheet(t *testing.T) {
 							t.Fatal("fixture must really contain duplicate originals")
 						}
 						firstOriginal = text
-						cell, _ = excelize.CoordinatesToCellName(2, i+1)
+						cell, _ = excelize.CoordinatesToCellName(3, i+2)
 						if err := book.SetCellStr("Тексты", cell, translation); err != nil {
 							t.Fatal(err)
 						}
+						translatedRows = append(translatedRows, i+2)
+					}
+				}
+				if len(translatedRows) != 2 {
+					t.Fatal("fixture must contain both independently translated IDs")
+				}
+				// Moving complete rows must retain the association with each ID,
+				// including two rows whose original text is identical.
+				for column := 1; column <= 3; column++ {
+					first, _ := excelize.CoordinatesToCellName(column, translatedRows[0])
+					second, _ := excelize.CoordinatesToCellName(column, translatedRows[1])
+					firstValue, err := book.GetCellValue("Тексты", first)
+					if err != nil {
+						t.Fatal(err)
+					}
+					secondValue, err := book.GetCellValue("Тексты", second)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := book.SetCellStr("Тексты", first, secondValue); err != nil {
+						t.Fatal(err)
+					}
+					if err := book.SetCellStr("Тексты", second, firstValue); err != nil {
+						t.Fatal(err)
 					}
 				}
 				if err := book.SetSheetName("Тексты", "Лист1"); err != nil {
@@ -111,26 +146,24 @@ func TestCommonWorkbookDuplicateOriginalsAndRenamedSheet(t *testing.T) {
 }
 
 func TestCommonWorkbookRejectsChangedOriginals(t *testing.T) {
-	for _, operation := range []string{"changed", "missing", "reordered", "extra", "formula", "missing font"} {
+	for _, operation := range []string{"changed original", "changed ID", "missing", "extra", "translation formula", "original formula", "missing font"} {
 		t.Run(operation, func(t *testing.T) {
 			_, editable := unpackFixture(t, "softdisk")
 			atlasWorkbook(t, &editable, func(book *excelize.File) {
 				var err error
 				switch operation {
-				case "changed":
-					err = book.SetCellStr("Тексты", "A1", "Edited original")
+				case "changed original":
+					err = book.SetCellStr("Тексты", "B2", "Edited original")
+				case "changed ID":
+					err = book.SetCellStr("Тексты", "A2", "unknown_id")
 				case "missing":
-					err = book.RemoveRow("Тексты", 1)
-				case "reordered":
-					first, _ := book.GetCellValue("Тексты", "A1")
-					second, _ := book.GetCellValue("Тексты", "A2")
-					if err = book.SetCellStr("Тексты", "A1", second); err == nil {
-						err = book.SetCellStr("Тексты", "A2", first)
-					}
+					err = book.RemoveRow("Тексты", 2)
 				case "extra":
 					err = book.SetCellStr("Тексты", "A1000", "Extra source")
-				case "formula":
-					err = book.SetCellFormula("Тексты", "B1", "1+1")
+				case "translation formula":
+					err = book.SetCellFormula("Тексты", "C2", "1+1")
+				case "original formula":
+					err = book.SetCellFormula("Тексты", "B2", "1+1")
 				case "missing font":
 					err = book.DeleteSheet("Шрифт")
 				}
@@ -142,5 +175,37 @@ func TestCommonWorkbookRejectsChangedOriginals(t *testing.T) {
 				t.Fatal("accepted an invalid common workbook", operation)
 			}
 		})
+	}
+}
+
+func TestCommonWorkbookRejectsOldTwoColumns(t *testing.T) {
+	for _, variant := range []string{"softdisk", "retail"} {
+		for _, format := range []string{"id/text", "original/translation"} {
+			t.Run(variant+"/"+format, func(t *testing.T) {
+				_, editable := unpackFixture(t, variant)
+				atlasWorkbook(t, &editable, func(book *excelize.File) {
+					// Only the text-sheet schema is old; keep every current PNG,
+					// metadata entry and Unicode assignment valid and present.
+					if format == "id/text" {
+						if err := book.RemoveCol("Тексты", "C"); err != nil {
+							t.Fatal(err)
+						}
+						if err := book.SetSheetRow("Тексты", "A1", &[]any{"id", "text"}); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						if err := book.RemoveCol("Тексты", "A"); err != nil {
+							t.Fatal(err)
+						}
+						if err := book.RemoveRow("Тексты", 1); err != nil {
+							t.Fatal(err)
+						}
+					}
+				})
+				if _, err := (ExeTextHandler{}).Repack(editable.Manifest, editable.Translatable, editable.Meta); err == nil {
+					t.Fatal("old two-column books require a fresh export", format)
+				}
+			})
+		}
 	}
 }

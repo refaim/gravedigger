@@ -9,15 +9,6 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 function Set-XlsxText([string]$Path, [string]$Id, [string]$Text, [switch]$ChangeFirstCharacter) {
-    $editableRoot = Split-Path (Split-Path $Path -Parent) -Parent
-    $manifest = Get-ChildItem -LiteralPath (Join-Path $editableRoot 'meta') -Filter 'manifest.json' -File -Recurse |
-        ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } |
-        Where-Object { $_.handler -eq 'ExeTextHandler' } | Select-Object -First 1
-    $rowNumber = -1
-    for ($i = 0; $i -lt $manifest.metadata.strings.Count; $i++) {
-        if ($manifest.metadata.strings[$i].id -eq $Id) { $rowNumber = $i + 1; break }
-    }
-    if ($rowNumber -lt 1) { throw "Manifest string id missing: $Id" }
     $archive = [IO.Compression.ZipFile]::Open($Path, [IO.Compression.ZipArchiveMode]::Update)
     try {
         $documents = @{}
@@ -30,28 +21,34 @@ function Set-XlsxText([string]$Path, [string]$Id, [string]$Text, [switch]$Change
         $ns = [Xml.XmlNamespaceManager]::new($strings.NameTable)
         $ns.AddNamespace('s', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main')
         $items = $strings.SelectNodes('/s:sst/s:si', $ns)
-        $row = $sheet.SelectSingleNode("//s:row[@r='$rowNumber']", $ns)
-        $cell = $row.SelectSingleNode("s:c[@r='B$rowNumber']", $ns)
+        $readText = {
+            param($sourceCell)
+            if (!$sourceCell) { return '' }
+            if ($sourceCell.GetAttribute('t') -eq 's') {
+                $value = $sourceCell.SelectSingleNode('s:v', $ns)
+                return $items[[int]$value.InnerText].InnerText
+            }
+            return $sourceCell.InnerText
+        }
+        $row = $null
+        foreach ($candidate in $sheet.SelectNodes('/s:worksheet/s:sheetData/s:row', $ns)) {
+            $idCell = $candidate.SelectSingleNode("s:c[@r='A$($candidate.GetAttribute('r'))']", $ns)
+            if ((& $readText $idCell) -ceq $Id) { $row = $candidate; break }
+        }
+        if (!$row) { throw "XLSX id missing: $Id" }
+        $rowNumber = $row.GetAttribute('r')
+        $cell = $row.SelectSingleNode("s:c[@r='C$rowNumber']", $ns)
         if (!$cell) {
             $cell = $sheet.CreateElement('c', $ns.LookupNamespace('s'))
-            $cell.SetAttribute('r', "B$rowNumber")
+            $cell.SetAttribute('r', "C$rowNumber")
             [void]$row.AppendChild($cell)
         }
         if ($ChangeFirstCharacter) {
-            $readText = {
-                param($sourceCell)
-                if (!$sourceCell) { return '' }
-                if ($sourceCell.GetAttribute('t') -eq 's') {
-                    $value = $sourceCell.SelectSingleNode('s:v', $ns)
-                    return $items[[int]$value.InnerText].InnerText
-                }
-                return $sourceCell.InnerText
-            }
             $effectiveText = & $readText $cell
-            if ($effectiveText -eq '') { $effectiveText = & $readText $row.SelectSingleNode("s:c[@r='A$rowNumber']", $ns) }
+            if ($effectiveText -eq '') { $effectiveText = & $readText $row.SelectSingleNode("s:c[@r='B$rowNumber']", $ns) }
             $Text = 'X' + $effectiveText.Substring(1)
         }
-        # Empty translations share an SST entry. Inline text changes only this B
+        # Empty translations share an SST entry. Inline text changes only this C
         # cell and leaves all originals, other translations and font rows intact.
         while ($cell.HasChildNodes) { [void]$cell.RemoveChild($cell.FirstChild) }
         $cell.SetAttribute('t', 'inlineStr')

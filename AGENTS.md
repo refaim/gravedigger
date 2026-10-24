@@ -20,29 +20,34 @@ Go translation toolkit for Dangerous Dave in the Haunted Mansion.
   the same two archives used by the Python predecessor.
 - Run `go run ./cmd/gravedigger --help` during development.
 - Build with `go build -o bin/gravedigger ./cmd/gravedigger` (use `.exe` on Windows).
-- `internal/app.Version` is the application version; current app version: 3.2.0.
+- `internal/app.Version` is the application version; current app version: 4.0.0.
 - Excelize handles XLSX; Afero provides filesystem access and failure testing.
   The bundled VGA font is embedded in the Go binary.
 - Preserve the `translatable/` and `meta/` layout. Unchanged EXEs roundtrip
   byte-exact; edited EXEs are rebuilt as decompressed MZ files.
 - `strings.xlsx` is one shared workbook with consistently named `Тексты` and
-  `Шрифт` sheets. The first sheet has original/translation columns without a
-  header row or IDs. Row bindings come from the original EXE and ordered manifest
-  strings. Empty translations keep the original; originals and order are checked.
-  Legacy id/text books remain readable. Preserve the font sheet when copying
-  SP text back into the workbook; lost Unicode assignments cannot be inferred.
+  `Шрифт` sheets. The first sheet has `ID`/`Английский`/`Русский` headers and
+  ID/original/translation data. Validate IDs and originals against the original
+  EXE and manifest; bind translations by ID so rows can be reordered. Empty
+  translations keep the original. This is the only supported workbook schema.
+  For SP, exchange only the two text columns without headers and preserve
+  IDs, originals and the font sheet when copying translations back. During this
+  two-column exchange, retain the exported row order and keep repeated originals
+  separate; translations of identical originals cannot be disambiguated without
+  IDs. Lost Unicode assignments cannot be inferred.
 - Embedded EXE artwork exports 73 fixed EGA PNGs under `translatable/exe/`:
   32 UI tiles (8x8), 40 death frames (48x48), and THE END (208x56).
   The four-plane bank at code-image 0x188e0 has stride 0x33b0 and is fully
   covered by these images. Reuse the graphics package's planar PNG codec.
-  New manifests mark `embedded_graphics` and require every PNG; older projects
-  without the marker or artwork preserve the embedded bank unchanged.
+  Repacking always requires every PNG and the complete current string manifest.
+  Accept the original exit-screen instructions and the current far-font stub;
+  do not retain automatic migrations of older generated stubs or project formats.
   External-sprite descriptors and the 24 PC Speaker cues remain untouched.
 - String xrefs must be verified as pointers in their actual call context.
   0xF28 is a memset count (1024), not the win_congrats pointer at 0x10FA.
   Keyboard binding separators are exported so font remapping also covers them.
 - Fonts require `game_font.png` and the `Шрифт` sheet in `strings.xlsx`.
-  JSON font compatibility was explicitly removed at Roma's request.
+  The font format is PNG plus the workbook sheet; do not add JSON font support.
   The PNG is 320x120: 16x6 bordered 20x20 cells numbered 1..96. Each has a
   16x10 drawing area inset one pixel and tiny 3x5 grey numbers below.
   Sheet columns are number/symbol with the same 1..96 cell numbers; convert

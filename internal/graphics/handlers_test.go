@@ -191,7 +191,7 @@ func TestIntroSynthetic(t *testing.T) {
 	}
 }
 
-func TestLegacyManifestShape(t *testing.T) {
+func TestManifestShape(t *testing.T) {
 	for _, h := range []resource.Handler{PicHandler{}, SpriteHandler{}, IntroHandler{}} {
 		u, err := h.Unpack(h.Patterns()[0], mustRead(t, "softdisk", h.Patterns()[0]))
 		if err != nil {
@@ -211,7 +211,7 @@ func TestLegacyManifestShape(t *testing.T) {
 				t.Fatalf("sprites %d, %v", len(u.Translatable), meta["prefix"])
 			}
 			if _, ok := u.Translatable["sprites/dave_0000.png"]; !ok {
-				t.Fatal("legacy sprite name missing")
+				t.Fatal("sprite name missing")
 			}
 		case "IntroHandler":
 			if meta["width"] != float64(256) || meta["height"] != float64(64) || meta["decomp_size"] != float64(8192) {

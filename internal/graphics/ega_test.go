@@ -87,16 +87,16 @@ func TestPNG(t *testing.T) {
 	if _, err := pngPixels(pngData(t, rgb), 8, 2); err == nil {
 		t.Fatal("transparency accepted")
 	}
-	// Pillow legacy exports contain 256 palette entries with black padding.
+	// Image editors may write 256 palette entries with unused black padding.
 	palette := append(color.Palette(nil), egaPalette...)
 	for len(palette) < 256 {
 		palette = append(palette, color.Black)
 	}
-	legacy := image.NewPaletted(image.Rect(0, 0, 8, 2), palette)
-	copy(legacy.Pix, pixels)
-	decoded, err = pngPixels(pngData(t, legacy), 8, 2)
+	paletted := image.NewPaletted(image.Rect(0, 0, 8, 2), palette)
+	copy(paletted.Pix, pixels)
+	decoded, err = pngPixels(pngData(t, paletted), 8, 2)
 	if err != nil || !bytes.Equal(decoded, pixels) {
-		t.Fatalf("legacy palette %v: %v", decoded, err)
+		t.Fatalf("padded palette %v: %v", decoded, err)
 	}
 }
 
